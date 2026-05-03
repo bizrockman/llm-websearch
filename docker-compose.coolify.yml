@@ -11,7 +11,14 @@ services:
       - /bin/sh
       - -c
       - |
+        set -e
+        echo "=== Template source content ===" &&
+        cat /tmp/settings.template.yml &&
+        echo "=== End template ===" &&
         sed "s|REPLACE_SEARXNG_SECRET|$$SEARXNG_SECRET|g" /tmp/settings.template.yml > /etc/searxng/settings.yml &&
+        echo "=== Rendered settings.yml ===" &&
+        cat /etc/searxng/settings.yml &&
+        echo "=== End rendered ===" &&
         chown searxng:searxng /etc/searxng/settings.yml &&
         exec /usr/local/searxng/entrypoint.sh
     environment:
