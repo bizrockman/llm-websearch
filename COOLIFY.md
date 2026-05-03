@@ -70,6 +70,61 @@ With auto-deploy enabled, Coolify polls the branch. For manual deploys:
 
 Data volumes (`redis_data`, `meili_data`) survive redeploys and image updates.
 
+## Persistent storage on a separate disk
+
+Two services hold persistent state:
+
+| Service | Container path | What lives here |
+|---|---|---|
+| Meilisearch | `/meili_data` | The full-text index of every extracted page — grows over time |
+| Redis | `/data` | TTL cache + rate-limit counters — bounded by `--maxmemory 256mb` |
+
+By default both use **Docker named volumes** managed by Coolify under its
+own data dir (typically `/data/coolify/...` on the host). For most cases
+that's fine.
+
+To put either on a **separately mounted disk** (more space, separate
+backup policy, dedicated SSD):
+
+1. **Mount the disk on the host first** (OS-level, not Coolify):
+   ```bash
+   # Example: mount /dev/sdb1 at /mnt/bigdisk
+   sudo mkdir -p /mnt/bigdisk
+   sudo mount /dev/sdb1 /mnt/bigdisk
+   # Make it survive reboot via /etc/fstab
+   ```
+
+2. **Create the target directories**:
+   ```bash
+   sudo mkdir -p /mnt/bigdisk/orio/meili /mnt/bigdisk/orio/redis
+   # Redis runs as UID 999; pre-set ownership to avoid first-start chown
+   sudo chown -R 999:999 /mnt/bigdisk/orio/redis
+   ```
+
+3. **Set env vars in Coolify** (overrides the named volumes):
+   ```
+   MEILI_DATA_PATH=/mnt/bigdisk/orio/meili
+   REDIS_DATA_PATH=/mnt/bigdisk/orio/redis
+   ```
+
+4. **Redeploy.** Compose substitutes these paths as bind mounts.
+
+Either variable can be set independently — e.g. keep Redis on the default
+fast SSD, move only Meilisearch to a bigger HDD.
+
+**Migration from existing named volume to bind mount** (only if you've
+already deployed and have data to preserve):
+
+```bash
+# Stop the service
+docker compose -f docker-compose.coolify.yml stop meilisearch
+# Find current data dir
+docker volume inspect <project>_meili_data
+# Copy preserving permissions
+sudo cp -a /var/lib/docker/volumes/<project>_meili_data/_data/. /mnt/bigdisk/orio/meili/
+# Set MEILI_DATA_PATH in Coolify, redeploy
+```
+
 ## Admin access to Meilisearch
 
 Since Meilisearch is not externally reachable, there are two ways into the

@@ -39,7 +39,7 @@ services:
       - --maxmemory-policy
       - allkeys-lru
     volumes:
-      - redis_data:/data
+      - ${REDIS_DATA_PATH:-redis_data}:/data
     expose:
       - "6379"
     healthcheck:
@@ -62,7 +62,7 @@ services:
       - MEILI_NO_ANALYTICS=true
       - MEILI_ENV=production
     volumes:
-      - meili_data:/meili_data
+      - ${MEILI_DATA_PATH:-meili_data}:/meili_data
     expose:
       - "7700"
     healthcheck:
