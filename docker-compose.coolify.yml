@@ -128,8 +128,11 @@ services:
       - ORIO_LLM_API_KEY=${LLM_API_KEY:-}
       - ORIO_LLM_MODEL=${LLM_MODEL:-}
       - ORIO_CORS_ORIGINS=${CORS_ORIGINS:-}
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
+    # No volume mounts: the image bakes config.yaml in via COPY, and all
+    # operationally relevant values (URLs, secrets, feature flags) are
+    # overridden via the ORIO_* env vars above. Coolify's relative file
+    # bind mounts (./config.yaml) silently fall back to a directory mount,
+    # which then fails with "not a directory" on the api side.
     expose:
       - "8000"
     deploy:
