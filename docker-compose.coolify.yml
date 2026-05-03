@@ -1,6 +1,10 @@
 services:
   searxng:
-    image: searxng/searxng:latest
+    # Pinned to a specific tag — newer versions (2026.5.x and up) introduced
+    # strict msgspec schema validation that breaks our minimal settings.yml.
+    # Bump cautiously when upstream stabilizes the schema or when we update
+    # settings.prod.yml to match the new requirements.
+    image: searxng/searxng:2026.4.24-a7ac696b4
     restart: unless-stopped
     user: "0:0"
     entrypoint:
