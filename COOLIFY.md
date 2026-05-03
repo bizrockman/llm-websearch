@@ -70,7 +70,7 @@ With auto-deploy enabled, Coolify polls the branch. For manual deploys:
 
 Data volumes (`redis_data`, `meili_data`) survive redeploys and image updates.
 
-## Persistent storage on a separate disk
+## Persistent storage
 
 Two services hold persistent state:
 
@@ -79,12 +79,12 @@ Two services hold persistent state:
 | Meilisearch | `/meili_data` | The full-text index of every extracted page — grows over time |
 | Redis | `/data` | TTL cache + rate-limit counters — bounded by `--maxmemory 256mb` |
 
-By default both use **Docker named volumes** managed by Coolify under its
-own data dir (typically `/data/coolify/...` on the host). For most cases
-that's fine.
+The compose declares **named volumes with `local` driver and `bind`
+options** — every deploy mounts host paths from `MEILI_DATA_PATH` and
+`REDIS_DATA_PATH` (required env vars, deploy fails fast if unset). This
+is the pattern Coolify [recommends for predictable persistent storage](https://coolify.io/docs/knowledge-base/persistent-storage).
 
-To put either on a **separately mounted disk** (more space, separate
-backup policy, dedicated SSD):
+To set up a **separately mounted disk** for more space:
 
 1. **Mount the disk on the host first** (OS-level, not Coolify):
    ```bash

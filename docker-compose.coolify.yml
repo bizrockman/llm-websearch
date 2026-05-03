@@ -39,7 +39,7 @@ services:
       - --maxmemory-policy
       - allkeys-lru
     volumes:
-      - ${REDIS_DATA_PATH:-redis_data}:/data
+      - redis_data:/data
     expose:
       - "6379"
     healthcheck:
@@ -62,7 +62,7 @@ services:
       - MEILI_NO_ANALYTICS=true
       - MEILI_ENV=production
     volumes:
-      - ${MEILI_DATA_PATH:-meili_data}:/meili_data
+      - meili_data:/meili_data
     expose:
       - "7700"
     healthcheck:
@@ -112,4 +112,14 @@ services:
 
 volumes:
   redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REDIS_DATA_PATH:?REDIS_DATA_PATH must be set, e.g. /mnt/HC_Volume_xxx/orio/redis}
   meili_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${MEILI_DATA_PATH:?MEILI_DATA_PATH must be set, e.g. /mnt/HC_Volume_xxx/orio/meili}
