@@ -111,15 +111,16 @@ services:
           memory: 1G
 
 volumes:
+  # Plain named volumes by default — Coolify creates them under its managed
+  # data dir (typically on the host's root disk).
+  #
+  # To put data on a separately mounted disk, use Coolify's "Persistent
+  # Storage" UI tab on the service:
+  #   - Mount path in container: /data       (for redis)  or  /meili_data  (for meili)
+  #   - Source path on host:     /mnt/yourdisk/orio/redis  or  .../meili
+  #   - Type: directory
+  #
+  # This is more reliable than compose-level ${VAR} substitution in
+  # driver_opts, which Coolify does not handle consistently.
   redis_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${REDIS_DATA_PATH:?REDIS_DATA_PATH must be set, e.g. /mnt/HC_Volume_xxx/orio/redis}
   meili_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${MEILI_DATA_PATH:?MEILI_DATA_PATH must be set, e.g. /mnt/HC_Volume_xxx/orio/meili}
