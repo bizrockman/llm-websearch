@@ -39,7 +39,10 @@ services:
       - --maxmemory-policy
       - allkeys-lru
     volumes:
-      - redis_data:/data
+      # Bind-mount to the extra Hetzner volume. Edit if your host uses a
+      # different mount point. Coolify's compose parser does not reliably
+      # substitute ${VAR} here, so the path is hardcoded.
+      - /mnt/HC_Volume_105588883/orio/redis:/data
     expose:
       - "6379"
     healthcheck:
@@ -62,7 +65,9 @@ services:
       - MEILI_NO_ANALYTICS=true
       - MEILI_ENV=production
     volumes:
-      - meili_data:/meili_data
+      # Bind-mount to the extra Hetzner volume. Edit if your host uses a
+      # different mount point.
+      - /mnt/HC_Volume_105588883/orio/meili:/meili_data
     expose:
       - "7700"
     healthcheck:
@@ -110,17 +115,4 @@ services:
         limits:
           memory: 1G
 
-volumes:
-  # Plain named volumes by default — Coolify creates them under its managed
-  # data dir (typically on the host's root disk).
-  #
-  # To put data on a separately mounted disk, use Coolify's "Persistent
-  # Storage" UI tab on the service:
-  #   - Mount path in container: /data       (for redis)  or  /meili_data  (for meili)
-  #   - Source path on host:     /mnt/yourdisk/orio/redis  or  .../meili
-  #   - Type: directory
-  #
-  # This is more reliable than compose-level ${VAR} substitution in
-  # driver_opts, which Coolify does not handle consistently.
-  redis_data:
-  meili_data:
+# No top-level volumes: bind mounts to host paths are declared per service.

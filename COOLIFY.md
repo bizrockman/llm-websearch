@@ -79,53 +79,43 @@ Two services hold persistent state:
 | Meilisearch | `/meili_data` | The full-text index of every extracted page — grows over time |
 | Redis | `/data` | TTL cache + rate-limit counters — bounded by `--maxmemory 256mb` |
 
-By default the compose uses plain **named Docker volumes**. Coolify
-creates them under its managed data dir (e.g. `/var/lib/docker/volumes/<project>_meili_data`),
-which sits on the host's root disk. Fine for small deployments.
+The compose declares **bind mounts to absolute host paths**:
 
-To put data on a **separately mounted disk** (more space, dedicated SSD,
-separate backup policy), use Coolify's **Persistent Storage UI**:
+```yaml
+redis:
+  volumes:
+    - /mnt/HC_Volume_105588883/orio/redis:/data
+meilisearch:
+  volumes:
+    - /mnt/HC_Volume_105588883/orio/meili:/meili_data
+```
 
-1. **Prepare the host once** (OS-level, not Coolify):
-   ```bash
-   # Make sure your extra disk is mounted (e.g. /mnt/HC_Volume_xxx)
-   sudo mkdir -p /mnt/HC_Volume_xxx/orio/meili /mnt/HC_Volume_xxx/orio/redis
-   sudo chown -R 999:999 /mnt/HC_Volume_xxx/orio/redis  # redis runs as UID 999
-   ```
-
-2. **In Coolify**, open your service → **Persistent Storage** tab → **+ Add**:
-
-   For **Meilisearch**:
-   - Name: `meili-bind`
-   - Source path: `/mnt/HC_Volume_xxx/orio/meili`
-   - Destination path: `/meili_data`
-   - Type: Directory
-
-   For **Redis** (separate entry):
-   - Name: `redis-bind`
-   - Source path: `/mnt/HC_Volume_xxx/orio/redis`
-   - Destination path: `/data`
-   - Type: Directory
-
-3. **Redeploy.** The UI-defined bind mounts take precedence over the named
-   volumes declared in compose; data lands on your chosen path.
-
-Why not put paths directly in the compose? Coolify's compose parser
-[doesn't reliably substitute](https://github.com/coollabsio/coolify/issues/8854)
-`${VAR}` inside volume definitions, especially in `driver_opts.device`.
-The Persistent Storage UI bypasses that and is the documented
-[Coolify approach](https://coolify.io/docs/knowledge-base/persistent-storage).
-
-**Migration from existing named volume to bind mount** (only if you've
-already deployed and have data to preserve):
+**Before first deploy, make sure these directories exist** on the host:
 
 ```bash
-# Stop the service first
+sudo mkdir -p /mnt/HC_Volume_105588883/orio/meili \
+              /mnt/HC_Volume_105588883/orio/redis
+sudo chown -R 999:999 /mnt/HC_Volume_105588883/orio/redis  # redis runs as UID 999
+```
+
+**Why hardcoded?** Coolify's compose parser does not reliably substitute
+`${VAR}` inside volume mappings ([issue #8854](https://github.com/coollabsio/coolify/issues/8854)),
+and for compose-based applications the Persistent Storage UI is read-only.
+Hardcoding is the only mechanism that works deterministically. If you
+deploy on a different host, edit the two paths in
+`docker-compose.coolify.yml` to match your mount layout, commit, and
+redeploy.
+
+**Migration from a previous named-volume deploy** (only if you've already
+deployed and have data to preserve):
+
+```bash
 # Find current data dir
 docker volume inspect <project>_meili_data
-# Copy preserving permissions
-sudo cp -a /var/lib/docker/volumes/<project>_meili_data/_data/. /mnt/HC_Volume_xxx/orio/meili/
-# Add the bind mount in Coolify Persistent Storage UI, redeploy
+# Stop the meilisearch container first, then copy preserving permissions
+sudo cp -a /var/lib/docker/volumes/<project>_meili_data/_data/. \
+           /mnt/HC_Volume_105588883/orio/meili/
+# Repeat for redis. Then redeploy with the new compose.
 ```
 
 ## Admin access to Meilisearch
