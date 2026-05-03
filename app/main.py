@@ -16,6 +16,7 @@ from app.rate_limit import limiter
 from app.routers import extract, search, search_stream
 from app.services.cache import CacheService
 from app.services.extractor import ContentExtractor
+from app.services.indexer import IndexerService
 from app.services.llm import LLMService
 from app.services.reranker import RerankerService
 from app.services.search_backend import create_search_backend
@@ -140,8 +141,14 @@ async def lifespan(app: FastAPI):
     # Search backend (with fallback if configured)
     app.state.search_backend = create_search_backend(settings, app.state.search_http_client)
 
+    # Indexer (Meilisearch)
+    app.state.indexer = IndexerService(settings)
+    await app.state.indexer.initialize()
+
     # Content extractor
-    app.state.extractor = ContentExtractor(settings, app.state.extract_http_client)
+    app.state.extractor = ContentExtractor(
+        settings, app.state.extract_http_client, indexer=app.state.indexer
+    )
 
     # Reranker
     app.state.reranker = RerankerService()
@@ -160,6 +167,7 @@ async def lifespan(app: FastAPI):
         rate_limit="enabled" if settings.rate_limit.enabled else "disabled",
         rerank="enabled" if settings.rerank.enabled else "disabled",
         llm="enabled" if settings.llm.enabled else "disabled",
+        indexer="enabled" if app.state.indexer.enabled else "disabled",
         fallback="enabled" if settings.resilience.backend_fallback else "disabled",
         host=settings.server.host,
         port=settings.server.port,
@@ -171,6 +179,7 @@ async def lifespan(app: FastAPI):
     await app.state.extract_http_client.aclose()
     await app.state.llm.close()
     await app.state.cache.close()
+    await app.state.indexer.close()
     logger.info("shutdown", service="OrioSearch")
 
 

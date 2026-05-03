@@ -57,11 +57,19 @@ async def _do_extract(request: Request, body: ExtractRequest) -> ExtractResponse
         extractions = await extractor.extract_urls(
             urls_to_fetch, output_format=body.format.value,
         )
+        indexer = request.app.state.indexer
         to_cache: list[tuple[str, str]] = []
         for extraction in extractions:
             if extraction.success:
                 results.append(ExtractResult(url=extraction.url, raw_content=extraction.content))
                 to_cache.append((extraction.url, extraction.content))
+                await indexer.index_document(
+                    url=extraction.url,
+                    title=extraction.title,
+                    content=extraction.content,
+                    etag=extraction.etag,
+                    last_modified=extraction.last_modified,
+                )
             else:
                 failed.append(FailedResult(url=extraction.url, error=extraction.error or "Unknown error"))
         await cache.set_extract_batch(to_cache)

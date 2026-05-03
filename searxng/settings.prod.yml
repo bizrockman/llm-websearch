@@ -1,0 +1,14 @@
+use_default_settings: true
+
+server:
+  limiter: true
+  secret_key: "REPLACE_SEARXNG_SECRET"
+  public_instance: false
+
+search:
+  formats:
+    - html
+    - json
+
+general:
+  enable_metrics: false

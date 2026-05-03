@@ -1,0 +1,67 @@
+llm-websearch
+Copyright 2026 bizrockman
+
+This product includes software developed at vkfolio (https://github.com/vkfolio/orio-search).
+
+================================================================================
+LICENSING SUMMARY
+================================================================================
+
+This repository is a fork of OrioSearch (https://github.com/vkfolio/orio-search),
+originally licensed under the MIT License (see LICENSE-UPSTREAM-MIT).
+
+Modifications, additions, and new files contributed by bizrockman in this fork
+are licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The combined work — that is, the repository as a whole — is distributed under
+the terms of the Apache License 2.0, which is compatible with the inclusion of
+MIT-licensed material from the upstream project. Users who obtain this combined
+work must comply with both license texts when redistributing.
+
+================================================================================
+PROVENANCE OF FILES
+================================================================================
+
+Files originating from upstream OrioSearch (MIT, Copyright (c) 2025 vkfolio),
+modified in this fork:
+
+  - app/config.py
+  - app/main.py
+  - app/routers/extract.py
+  - app/routers/search.py
+  - app/services/extractor.py
+  - config.yaml
+  - docker-compose.yml
+  - searxng/settings.yml
+  - README.upstream.md (originally README.md upstream)
+  - all other files not listed below as new
+
+Files added in this fork (Apache 2.0, Copyright 2026 bizrockman):
+
+  - app/services/indexer.py            — Meilisearch indexer service
+  - docker-compose.coolify.yml         — production Coolify compose
+  - searxng/settings.prod.yml          — production SearXNG template
+  - .env.coolify.example               — env-var template
+  - COOLIFY.md                         — production deployment guide
+  - README.md                          — fork-specific README
+  - LICENSE                            — Apache 2.0 license text
+  - LICENSE-UPSTREAM-MIT               — original MIT license text
+  - NOTICE                             — this file
+
+================================================================================
+THIRD-PARTY DEPENDENCIES
+================================================================================
+
+Runtime dependencies are declared in requirements.txt and remain under their
+respective licenses. Notable transitive components include:
+
+  - SearXNG          (AGPL-3.0)  — runs as a separate container, not linked
+  - Meilisearch      (MIT)        — runs as a separate container, not linked
+  - FastAPI          (MIT)
+  - Trafilatura      (Apache 2.0)
+  - readability-lxml (Apache 2.0)
+  - Redis            (BSD-3-Clause / RSAL — see Redis project)
+  - httpx            (BSD-3-Clause)
+
+These are referenced via Docker images or pip packages and are not
+redistributed as source within this repository.

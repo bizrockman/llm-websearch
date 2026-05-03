@@ -29,6 +29,28 @@ services:
         limits:
           memory: 256M
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    container_name: orio-search-meilisearch
+    ports:
+      - "7700:7700"
+    environment:
+      - MEILI_MASTER_KEY=orio-dev-master-key
+      - MEILI_NO_ANALYTICS=true
+      - MEILI_ENV=development
+    volumes:
+      - meili_data:/meili_data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:7700/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
   ollama:
     image: ollama/ollama:latest
     container_name: orio-search-ollama
@@ -47,13 +69,15 @@ services:
     build: .
     container_name: orio-search-api
     ports:
-      - "8000:8000"
+      - "8010:8000"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     depends_on:
       searxng:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      meilisearch:
         condition: service_healthy
     environment:
       - ORIO_SEARCH_CONFIG=/app/config.yaml
@@ -65,3 +89,4 @@ services:
 
 volumes:
   ollama_data:
+  meili_data:

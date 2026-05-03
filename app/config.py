@@ -84,6 +84,15 @@ class CorsConfig(BaseModel):
     allow_origins: list[str] = ["*"]
 
 
+class MeilisearchConfig(BaseModel):
+    enabled: bool = False
+    url: str = "http://meilisearch:7700"
+    api_key: str = ""
+    index_name: str = "orio_pages"
+    search_limit: int = 20
+    min_score: float = 0.0
+
+
 class LLMConfig(BaseModel):
     enabled: bool = False
     provider: str = "ollama"
@@ -115,6 +124,46 @@ class AppConfig(BaseModel):
     logging: LoggingConfig = LoggingConfig()
     cors: CorsConfig = CorsConfig()
     llm: LLMConfig = LLMConfig()
+    meilisearch: MeilisearchConfig = MeilisearchConfig()
+
+
+def _apply_env_overrides(cfg: AppConfig) -> AppConfig:
+    env = os.environ.get
+
+    if v := env("ORIO_SEARXNG_URL"):
+        cfg.search.searxng_url = v
+    if v := env("ORIO_REDIS_URL"):
+        cfg.cache.redis_url = v
+
+    if v := env("ORIO_AUTH_API_KEYS"):
+        cfg.auth.api_keys = [k.strip() for k in v.split(",") if k.strip()]
+        cfg.auth.enabled = True
+    elif env("ORIO_AUTH_ENABLED", "").lower() in ("1", "true", "yes"):
+        cfg.auth.enabled = True
+
+    if env("ORIO_RATE_LIMIT_ENABLED", "").lower() in ("1", "true", "yes"):
+        cfg.rate_limit.enabled = True
+
+    if v := env("ORIO_MEILI_URL"):
+        cfg.meilisearch.url = v
+    if v := env("ORIO_MEILI_API_KEY"):
+        cfg.meilisearch.api_key = v
+    if env("ORIO_MEILI_ENABLED"):
+        cfg.meilisearch.enabled = env("ORIO_MEILI_ENABLED", "").lower() in ("1", "true", "yes")
+
+    if v := env("ORIO_LLM_BASE_URL"):
+        cfg.llm.base_url = v
+    if v := env("ORIO_LLM_API_KEY"):
+        cfg.llm.api_key = v
+    if v := env("ORIO_LLM_MODEL"):
+        cfg.llm.model = v
+    if env("ORIO_LLM_ENABLED"):
+        cfg.llm.enabled = env("ORIO_LLM_ENABLED", "").lower() in ("1", "true", "yes")
+
+    if v := env("ORIO_CORS_ORIGINS"):
+        cfg.cors.allow_origins = [o.strip() for o in v.split(",") if o.strip()]
+
+    return cfg
 
 
 def load_config(config_path: str | None = None) -> AppConfig:
@@ -127,8 +176,10 @@ def load_config(config_path: str | None = None) -> AppConfig:
     if path.exists():
         with open(path) as f:
             data: dict[str, Any] = yaml.safe_load(f) or {}
-        return AppConfig(**data)
-    return AppConfig()
+        cfg = AppConfig(**data)
+    else:
+        cfg = AppConfig()
+    return _apply_env_overrides(cfg)
 
 
 settings = load_config()

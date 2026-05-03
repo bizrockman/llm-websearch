@@ -14,6 +14,7 @@ import trafilatura
 from circuitbreaker import CircuitBreakerError
 
 from app.config import AppConfig
+from app.services.indexer import IndexerService
 from app.services.resilience import extract_circuit, retry_async
 
 logger = structlog.get_logger(__name__)
@@ -24,6 +25,10 @@ class ExtractionResult:
     url: str
     content: Optional[str] = None
     error: Optional[str] = None
+    title: Optional[str] = None
+    etag: Optional[str] = None
+    last_modified: Optional[str] = None
+    from_index: bool = False
 
     @property
     def success(self) -> bool:
@@ -31,9 +36,15 @@ class ExtractionResult:
 
 
 class ContentExtractor:
-    def __init__(self, config: AppConfig, http_client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        http_client: httpx.AsyncClient,
+        indexer: Optional[IndexerService] = None,
+    ) -> None:
         self.config = config
         self.client = http_client
+        self.indexer = indexer
         self._domain_semaphores: OrderedDict[str, asyncio.Semaphore] = OrderedDict()
         self._domain_concurrency = config.extraction.domain_concurrency
         self._max_domains = config.extraction.domain_semaphore_max_size
@@ -68,13 +79,29 @@ class ContentExtractor:
             return await self._fetch_and_extract(url, output_format)
 
     async def _fetch_and_extract(self, url: str, output_format: str) -> ExtractionResult:
+        indexed_meta = await self.indexer.get_meta(url) if self.indexer else None
+
         try:
-            resp = await self._fetch_url(url)
+            resp = await self._fetch_url(url, indexed_meta)
+
+            if resp.status_code == 304 and indexed_meta and indexed_meta.get("content"):
+                logger.info("extraction_304_reuse", url=url)
+                return ExtractionResult(
+                    url=url,
+                    content=indexed_meta["content"],
+                    title=indexed_meta.get("title"),
+                    etag=indexed_meta.get("etag"),
+                    last_modified=indexed_meta.get("last_modified"),
+                    from_index=True,
+                )
+
             html = resp.text
 
             content_type = resp.headers.get("content-type", "")
             if "text/html" not in content_type and "application/xhtml" not in content_type:
                 return ExtractionResult(url=url, error=f"Non-HTML content type: {content_type}")
+
+            title = self._extract_title(html)
 
             # Tier 1: trafilatura
             extracted = self._extract_trafilatura(html, url, output_format)
@@ -91,7 +118,13 @@ class ContentExtractor:
             if len(extracted) > max_len:
                 extracted = extracted[:max_len] + "\n\n[Content truncated]"
 
-            return ExtractionResult(url=url, content=extracted)
+            return ExtractionResult(
+                url=url,
+                content=extracted,
+                title=title,
+                etag=resp.headers.get("etag"),
+                last_modified=resp.headers.get("last-modified"),
+            )
 
         except CircuitBreakerError:
             return ExtractionResult(url=url, error="Service temporarily unavailable (circuit open)")
@@ -103,21 +136,34 @@ class ContentExtractor:
             logger.exception("extraction_failed", url=url)
             return ExtractionResult(url=url, error=str(e))
 
-    async def _fetch_url(self, url: str) -> httpx.Response:
+    async def _fetch_url(self, url: str, indexed_meta: Optional[dict] = None) -> httpx.Response:
         @extract_circuit
         async def _do():
-            return await retry_async(lambda: self._raw_fetch(url))
+            return await retry_async(lambda: self._raw_fetch(url, indexed_meta))
         return await _do()
 
-    async def _raw_fetch(self, url: str) -> httpx.Response:
+    async def _raw_fetch(self, url: str, indexed_meta: Optional[dict] = None) -> httpx.Response:
+        headers = self._get_headers()
+        if indexed_meta:
+            if indexed_meta.get("etag"):
+                headers["If-None-Match"] = indexed_meta["etag"]
+            if indexed_meta.get("last_modified"):
+                headers["If-Modified-Since"] = indexed_meta["last_modified"]
         resp = await self.client.get(
             url,
-            headers=self._get_headers(),
+            headers=headers,
             timeout=self.config.extraction.timeout,
             follow_redirects=True,
         )
+        if resp.status_code == 304:
+            return resp
         resp.raise_for_status()
         return resp
+
+    @staticmethod
+    def _extract_title(html: str) -> Optional[str]:
+        m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+        return m.group(1).strip() if m else None
 
     def _extract_trafilatura(self, html: str, url: str, output_format: str) -> str | None:
         extracted = trafilatura.extract(

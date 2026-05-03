@@ -97,10 +97,18 @@ async def _do_search(request: Request, body: SearchRequest) -> SearchResponse:
         urls = [r.url for r in results]
         extractions = await extractor.extract_urls(urls)
         to_cache: list[tuple[str, str]] = []
+        indexer = request.app.state.indexer
         for result, extraction in zip(results, extractions):
             if extraction.success:
                 result.raw_content = extraction.content
                 to_cache.append((result.url, extraction.content))
+                await indexer.index_document(
+                    url=extraction.url,
+                    title=extraction.title or result.title,
+                    content=extraction.content,
+                    etag=extraction.etag,
+                    last_modified=extraction.last_modified,
+                )
         await cache.set_extract_batch(to_cache)
 
     # Images
@@ -129,3 +137,35 @@ async def _do_search(request: Request, body: SearchRequest) -> SearchResponse:
     await cache.set_search(body.query, ph, cache_data)
 
     return response
+
+
+@router.post("/search/local", response_model=SearchResponse)
+async def search_local(
+    request: Request,
+    body: SearchRequest,
+    api_key: str | None = Depends(verify_api_key),
+) -> SearchResponse:
+    start = time.perf_counter()
+    indexer = request.app.state.indexer
+    if not indexer.enabled:
+        raise HTTPException(503, "Local index is disabled")
+
+    hits = await indexer.search(body.query, limit=body.max_results)
+    results: list[SearchResult] = []
+    for h in hits:
+        content = h.get("content") or ""
+        snippet = content[:400]
+        results.append(
+            SearchResult(
+                title=h.get("title") or h.get("url"),
+                url=h.get("url"),
+                content=snippet,
+                score=h.get("_rankingScore"),
+                raw_content=content if body.include_raw_content else None,
+            )
+        )
+    elapsed = time.perf_counter() - start
+    return SearchResponse(
+        query=body.query, answer=None, results=results, images=[],
+        response_time=round(elapsed, 3),
+    )

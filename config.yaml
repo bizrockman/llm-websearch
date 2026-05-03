@@ -69,6 +69,14 @@ logging:
 cors:
   allow_origins: ["*"]
 
+meilisearch:
+  enabled: true
+  url: "http://meilisearch:7700"
+  api_key: "orio-dev-master-key"
+  index_name: "orio_pages"
+  search_limit: 20
+  min_score: 0.0
+
 llm:
   enabled: true
   provider: "ollama"         # label for logs (ollama, openai, groq, etc.)
