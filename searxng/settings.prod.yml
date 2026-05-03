@@ -1,7 +1,11 @@
 use_default_settings: true
 
 server:
-  limiter: true
+  # SearXNG only listens on the internal Docker network — clients reach it
+  # via the auth-protected API. Public-facing abuse cannot hit it, so the
+  # limiter (which would require a separate Valkey/Redis backend) is not
+  # needed and would just complicate the boot.
+  limiter: false
   secret_key: "REPLACE_SEARXNG_SECRET"
   public_instance: false
 
