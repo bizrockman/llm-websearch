@@ -7,25 +7,36 @@ services:
     image: searxng/searxng:2026.4.24-a7ac696b4
     restart: unless-stopped
     user: "0:0"
+    # Settings are generated inline at startup. Coolify's bind-mount handling
+    # for relative file paths in subdirs (./searxng/settings.prod.yml) is
+    # unreliable — it creates an empty directory when the source can't be
+    # resolved. Embedding the YAML in the entrypoint avoids that entirely.
     entrypoint:
       - /bin/sh
       - -c
       - |
         set -e
-        echo "=== Template source content ===" &&
-        cat /tmp/settings.template.yml &&
-        echo "=== End template ===" &&
-        sed "s|REPLACE_SEARXNG_SECRET|$$SEARXNG_SECRET|g" /tmp/settings.template.yml > /etc/searxng/settings.yml &&
-        echo "=== Rendered settings.yml ===" &&
-        cat /etc/searxng/settings.yml &&
-        echo "=== End rendered ===" &&
-        chown searxng:searxng /etc/searxng/settings.yml &&
+        cat > /etc/searxng/settings.yml <<EOF
+        use_default_settings: true
+
+        server:
+          limiter: false
+          secret_key: "$$SEARXNG_SECRET"
+          public_instance: false
+
+        search:
+          formats:
+            - html
+            - json
+
+        general:
+          enable_metrics: false
+        EOF
+        chown searxng:searxng /etc/searxng/settings.yml
         exec /usr/local/searxng/entrypoint.sh
     environment:
       - SEARXNG_SECRET=${SEARXNG_SECRET:?SEARXNG_SECRET must be set}
       - SEARXNG_BASE_URL=http://searxng:8080/
-    volumes:
-      - ./searxng/settings.prod.yml:/tmp/settings.template.yml:ro
     expose:
       - "8080"
     healthcheck:
