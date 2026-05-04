@@ -54,9 +54,13 @@ class AuthConfig(BaseModel):
 
 class RateLimitConfig(BaseModel):
     enabled: bool = False
-    default_rate: str = "60/minute"
-    search_rate: str = "30/minute"
-    extract_rate: str = "30/minute"
+    # Defaults are sized for bursty agentic workloads (Vane Discover fires
+    # ~12 parallel sub-queries per tab click, the Quality-mode agent runs
+    # multiple search iterations per question). Tune down via env for
+    # public-facing deployments.
+    default_rate: str = "120/minute"
+    search_rate: str = "200/minute"
+    extract_rate: str = "100/minute"
 
 
 class RerankConfig(BaseModel):
@@ -144,8 +148,17 @@ def _apply_env_overrides(cfg: AppConfig) -> AppConfig:
     elif env("ORIO_AUTH_ENABLED", "").lower() in ("1", "true", "yes"):
         cfg.auth.enabled = True
 
-    if env("ORIO_RATE_LIMIT_ENABLED", "").lower() in ("1", "true", "yes"):
+    rl_enabled = env("ORIO_RATE_LIMIT_ENABLED", "").lower()
+    if rl_enabled in ("1", "true", "yes"):
         cfg.rate_limit.enabled = True
+    elif rl_enabled in ("0", "false", "no"):
+        cfg.rate_limit.enabled = False
+    if v := env("ORIO_DEFAULT_RATE"):
+        cfg.rate_limit.default_rate = v
+    if v := env("ORIO_SEARCH_RATE"):
+        cfg.rate_limit.search_rate = v
+    if v := env("ORIO_EXTRACT_RATE"):
+        cfg.rate_limit.extract_rate = v
 
     if v := env("ORIO_MEILI_URL"):
         cfg.meilisearch.url = v

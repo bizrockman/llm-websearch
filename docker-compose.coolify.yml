@@ -122,7 +122,12 @@ services:
       - ORIO_MEILI_API_KEY=${MEILI_MASTER_KEY}
       - ORIO_MEILI_ENABLED=true
       - ORIO_AUTH_API_KEYS=${API_AUTH_KEYS:?API_AUTH_KEYS must be set}
-      - ORIO_RATE_LIMIT_ENABLED=true
+      # Rate-limit knobs. Override any of these via Coolify's UI env to tune
+      # without rebuilding. Defaults are sized for bursty agent workloads.
+      - ORIO_RATE_LIMIT_ENABLED=${ORIO_RATE_LIMIT_ENABLED:-true}
+      - ORIO_DEFAULT_RATE=${ORIO_DEFAULT_RATE:-120/minute}
+      - ORIO_SEARCH_RATE=${ORIO_SEARCH_RATE:-200/minute}
+      - ORIO_EXTRACT_RATE=${ORIO_EXTRACT_RATE:-100/minute}
       - ORIO_LLM_ENABLED=${LLM_ENABLED:-false}
       - ORIO_LLM_BASE_URL=${LLM_BASE_URL:-}
       - ORIO_LLM_API_KEY=${LLM_API_KEY:-}
