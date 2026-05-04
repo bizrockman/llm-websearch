@@ -4,7 +4,7 @@ import json
 import time
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from app.auth import verify_api_key
 from app.config import settings
@@ -30,30 +30,35 @@ def _params_hash(req: SearchRequest) -> str:
 async def search(
     request: Request,
     body: SearchRequest,
+    http_response: Response,
     api_key: str | None = Depends(verify_api_key),
 ) -> SearchResponse:
     try:
         return await asyncio.wait_for(
-            _do_search(request, body),
+            _do_search(request, body, http_response),
             timeout=settings.resilience.request_timeout,
         )
     except asyncio.TimeoutError:
         raise HTTPException(504, "Request timed out")
 
 
-async def _do_search(request: Request, body: SearchRequest) -> SearchResponse:
+async def _do_search(
+    request: Request, body: SearchRequest, http_response: Response
+) -> SearchResponse:
     start = time.perf_counter()
 
     cache = request.app.state.cache
     backend = request.app.state.search_backend
     extractor = request.app.state.extractor
     reranker = request.app.state.reranker
+    indexer = request.app.state.indexer
 
     # Check cache
     ph = _params_hash(body)
     cached = await cache.get_search(body.query, ph)
     if cached:
         elapsed = time.perf_counter() - start
+        http_response.headers["X-Orio-Source"] = "redis"
         return SearchResponse(**{**cached, "response_time": round(elapsed, 3)})
 
     # Query search backend with graceful degradation
@@ -69,11 +74,38 @@ async def _do_search(request: Request, body: SearchRequest) -> SearchResponse:
         )
     except Exception as e:
         logger.error("search_backend_failed", error=str(e))
+
+        # 1) Try stale Redis cache (same query+params, expired)
         stale = await cache.get_search(body.query, ph)
         if stale:
             elapsed = time.perf_counter() - start
             logger.info("serving_stale_cache", query=body.query)
+            http_response.headers["X-Orio-Source"] = "stale"
             return SearchResponse(**{**stale, "response_time": round(elapsed, 3)})
+
+        # 2) Last resort: full-text query the local Meili index (BM25)
+        if indexer.enabled:
+            hits = await indexer.search(body.query, limit=body.max_results)
+            if hits:
+                idx_results: list[SearchResult] = []
+                for h in hits:
+                    content = h.get("content") or ""
+                    snippet = content[:400]
+                    idx_results.append(SearchResult(
+                        title=h.get("title") or h.get("url"),
+                        url=h.get("url"),
+                        content=snippet,
+                        score=h.get("_rankingScore"),
+                        raw_content=content if body.include_raw_content else None,
+                    ))
+                elapsed = time.perf_counter() - start
+                logger.info("serving_index_fallback", query=body.query, hits=len(hits))
+                http_response.headers["X-Orio-Source"] = "index"
+                return SearchResponse(
+                    query=body.query, answer=None, results=idx_results,
+                    images=[], response_time=round(elapsed, 3),
+                )
+
         raise HTTPException(503, "Search service unavailable")
 
     # Build results
@@ -97,7 +129,6 @@ async def _do_search(request: Request, body: SearchRequest) -> SearchResponse:
         urls = [r.url for r in results]
         extractions = await extractor.extract_urls(urls)
         to_cache: list[tuple[str, str]] = []
-        indexer = request.app.state.indexer
         for result, extraction in zip(results, extractions):
             if extraction.success:
                 result.raw_content = extraction.content
@@ -126,23 +157,25 @@ async def _do_search(request: Request, body: SearchRequest) -> SearchResponse:
                 await cache.set_answer(body.query, ph, answer)
 
     elapsed = time.perf_counter() - start
-    response = SearchResponse(
+    payload = SearchResponse(
         query=body.query, answer=answer, results=results, images=images,
         response_time=round(elapsed, 3),
     )
 
     # Cache response
-    cache_data = response.model_dump()
+    cache_data = payload.model_dump()
     del cache_data["response_time"]
     await cache.set_search(body.query, ph, cache_data)
 
-    return response
+    http_response.headers["X-Orio-Source"] = "web"
+    return payload
 
 
 @router.post("/search/local", response_model=SearchResponse)
 async def search_local(
     request: Request,
     body: SearchRequest,
+    http_response: Response,
     api_key: str | None = Depends(verify_api_key),
 ) -> SearchResponse:
     start = time.perf_counter()
@@ -165,6 +198,7 @@ async def search_local(
             )
         )
     elapsed = time.perf_counter() - start
+    http_response.headers["X-Orio-Source"] = "index"
     return SearchResponse(
         query=body.query, answer=None, results=results, images=[],
         response_time=round(elapsed, 3),
