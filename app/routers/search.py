@@ -10,9 +10,15 @@ from app.auth import verify_api_key
 from app.config import settings
 from app.models.schemas import (
     ImageResult,
+    ImageSearchResponse,
+    ImageSearchResult,
+    MediaSearchRequest,
     SearchRequest,
     SearchResponse,
     SearchResult,
+    Topic,
+    VideoSearchResponse,
+    VideoSearchResult,
 )
 from app.rate_limit import limiter
 
@@ -115,6 +121,7 @@ async def _do_search(
             SearchResult(
                 title=raw.title, url=raw.url, content=raw.snippet,
                 score=raw.score, raw_content=None,
+                thumbnail=raw.thumbnail,
             )
         )
 
@@ -124,7 +131,11 @@ async def _do_search(
         reranked = reranker.rerank(body.query, result_dicts, top_k=body.max_results)
         results = [SearchResult(**r) for r in reranked]
 
-    # Advanced depth: fetch and extract content
+    # Advanced depth: fetch and attach raw_content. Indexing is intentionally
+    # NOT done here — the Meilisearch index is owned exclusively by /extract,
+    # so the wiki only contains pages a caller explicitly chose to read. The
+    # Redis content cache is still warmed because that's free and benefits a
+    # subsequent /extract on the same URL.
     if body.search_depth.value == "advanced" or body.include_raw_content:
         urls = [r.url for r in results]
         extractions = await extractor.extract_urls(urls)
@@ -133,13 +144,6 @@ async def _do_search(
             if extraction.success:
                 result.raw_content = extraction.content
                 to_cache.append((result.url, extraction.content))
-                await indexer.index_document(
-                    url=extraction.url,
-                    title=extraction.title or result.title,
-                    content=extraction.content,
-                    etag=extraction.etag,
-                    last_modified=extraction.last_modified,
-                )
         await cache.set_extract_batch(to_cache)
 
     # Images
@@ -202,4 +206,130 @@ async def search_local(
     return SearchResponse(
         query=body.query, answer=None, results=results, images=[],
         response_time=round(elapsed, 3),
+    )
+
+
+# ---------------------------------------------------------------------------
+# /search/news — thin wrapper around /search with topic forced to "news".
+# Cache-keying still flows through _do_search via the params hash, which now
+# differs from a general /search call because topic is news.
+# ---------------------------------------------------------------------------
+
+@router.post("/search/news", response_model=SearchResponse)
+@limiter.limit(settings.rate_limit.search_rate)
+async def search_news(
+    request: Request,
+    body: SearchRequest,
+    http_response: Response,
+    api_key: str | None = Depends(verify_api_key),
+) -> SearchResponse:
+    body.topic = Topic.news
+    try:
+        return await asyncio.wait_for(
+            _do_search(request, body, http_response),
+            timeout=settings.resilience.request_timeout,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Request timed out")
+
+
+# ---------------------------------------------------------------------------
+# /search/images — dedicated image search. Returns rich per-result fields
+# (img_src, thumbnail_src, source). Ignores search_depth; never indexes.
+# ---------------------------------------------------------------------------
+
+@router.post("/search/images", response_model=ImageSearchResponse)
+@limiter.limit(settings.rate_limit.search_rate)
+async def search_images(
+    request: Request,
+    body: MediaSearchRequest,
+    http_response: Response,
+    api_key: str | None = Depends(verify_api_key),
+) -> ImageSearchResponse:
+    start = time.perf_counter()
+    backend = request.app.state.search_backend
+
+    try:
+        hits = await asyncio.wait_for(
+            backend.image_search_rich(
+                body.query,
+                max_results=body.max_results,
+                time_range=body.time_range.value if body.time_range else None,
+            ),
+            timeout=settings.resilience.request_timeout,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Request timed out")
+    except NotImplementedError:
+        raise HTTPException(501, "Image search is not available on this backend")
+    except Exception as e:
+        logger.error("image_search_failed", error=str(e))
+        raise HTTPException(503, "Image search service unavailable")
+
+    results = [
+        ImageSearchResult(
+            title=h.title,
+            url=h.url,
+            img_src=h.img_src,
+            thumbnail_src=h.thumbnail_src,
+            source=h.source,
+        )
+        for h in hits
+    ]
+    elapsed = time.perf_counter() - start
+    http_response.headers["X-Orio-Source"] = "web"
+    return ImageSearchResponse(
+        query=body.query, results=results, response_time=round(elapsed, 3),
+    )
+
+
+# ---------------------------------------------------------------------------
+# /search/videos — dedicated video search. Returns iframe_src + thumbnail.
+# Ignores search_depth; never indexes.
+# ---------------------------------------------------------------------------
+
+@router.post("/search/videos", response_model=VideoSearchResponse)
+@limiter.limit(settings.rate_limit.search_rate)
+async def search_videos(
+    request: Request,
+    body: MediaSearchRequest,
+    http_response: Response,
+    api_key: str | None = Depends(verify_api_key),
+) -> VideoSearchResponse:
+    start = time.perf_counter()
+    backend = request.app.state.search_backend
+
+    try:
+        hits = await asyncio.wait_for(
+            backend.video_search_rich(
+                body.query,
+                max_results=body.max_results,
+                time_range=body.time_range.value if body.time_range else None,
+            ),
+            timeout=settings.resilience.request_timeout,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Request timed out")
+    except NotImplementedError:
+        raise HTTPException(501, "Video search is not available on this backend")
+    except Exception as e:
+        logger.error("video_search_failed", error=str(e))
+        raise HTTPException(503, "Video search service unavailable")
+
+    results = [
+        VideoSearchResult(
+            title=h.title,
+            url=h.url,
+            iframe_src=h.iframe_src,
+            img_src=h.img_src,
+            duration=h.duration,
+            author=h.author,
+            source=h.source,
+        )
+        for h in hits
+    ]
+    elapsed = time.perf_counter() - start
+    http_response.headers["X-Orio-Source"] = "web"
+    return VideoSearchResponse(
+        query=body.query, results=results, response_time=round(elapsed, 3),
     )

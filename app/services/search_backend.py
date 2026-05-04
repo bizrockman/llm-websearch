@@ -22,12 +22,37 @@ class RawSearchResult:
     url: str
     snippet: str
     score: float = 0.0
+    thumbnail: Optional[str] = None
 
 
 @dataclass
 class RawImageResult:
     url: str
     description: str = ""
+
+
+@dataclass
+class RawImageHit:
+    """Richer image result for the dedicated /search/images endpoint.
+    `url` is the page hosting the image, `img_src` is the actual image URL.
+    """
+    title: str
+    url: str
+    img_src: str
+    thumbnail_src: Optional[str] = None
+    source: Optional[str] = None
+
+
+@dataclass
+class RawVideoHit:
+    """Video result for the dedicated /search/videos endpoint."""
+    title: str
+    url: str
+    iframe_src: Optional[str] = None
+    img_src: Optional[str] = None
+    duration: Optional[str] = None
+    author: Optional[str] = None
+    source: Optional[str] = None
 
 
 @dataclass
@@ -50,6 +75,22 @@ class SearchBackend(ABC):
         include_images: bool = False,
     ) -> BackendSearchResponse:
         ...
+
+    async def image_search_rich(
+        self, query: str, max_results: int = 10, time_range: Optional[str] = None,
+    ) -> list[RawImageHit]:
+        """Optional: dedicated image search with rich per-result fields."""
+        raise NotImplementedError(
+            "This backend does not implement image_search_rich"
+        )
+
+    async def video_search_rich(
+        self, query: str, max_results: int = 10, time_range: Optional[str] = None,
+    ) -> list[RawVideoHit]:
+        """Optional: dedicated video search with rich per-result fields."""
+        raise NotImplementedError(
+            "This backend does not implement video_search_rich"
+        )
 
 
 class SearXNGBackend(SearchBackend):
@@ -131,12 +172,22 @@ class SearXNGBackend(SearchBackend):
         for item in data.get("results", [])[:max_results]:
             raw_score = item.get("score", 0)
             score = min(1.0, raw_score) if raw_score <= 1.0 else min(1.0, raw_score / 10.0)
+            # SearXNG engines surface thumbnails under different keys; news
+            # engines (Bing-news etc.) tend to use `thumbnail`, image-bearing
+            # results sometimes use `thumbnail_src` or `img_src`. Take the
+            # first one that exists.
+            thumbnail = (
+                item.get("thumbnail")
+                or item.get("thumbnail_src")
+                or item.get("img_src")
+            )
             results.append(
                 RawSearchResult(
                     title=item.get("title", ""),
                     url=item.get("url", ""),
                     snippet=item.get("content", ""),
                     score=round(score, 4),
+                    thumbnail=thumbnail,
                 )
             )
         return results
@@ -153,6 +204,67 @@ class SearXNGBackend(SearchBackend):
             if img_url:
                 images.append(RawImageResult(url=img_url, description=item.get("title", "")))
         return images
+
+    async def image_search_rich(
+        self, query: str, max_results: int = 10, time_range: Optional[str] = None,
+    ) -> list[RawImageHit]:
+        """Image search returning rich per-result fields. Powers /search/images."""
+        params: dict = {"q": query, "format": "json", "categories": "images"}
+        if time_range in ("day", "week", "month", "year"):
+            params["time_range"] = time_range
+        resp = await self.client.get(f"{self.base_url}/search", params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+        hits: list[RawImageHit] = []
+        for item in data.get("results", [])[:max_results]:
+            img_src = item.get("img_src") or item.get("thumbnail_src") or ""
+            if not img_src:
+                continue
+            hits.append(RawImageHit(
+                title=item.get("title", ""),
+                url=item.get("url", "") or img_src,
+                img_src=img_src,
+                thumbnail_src=item.get("thumbnail_src"),
+                source=item.get("engine"),
+            ))
+        return hits
+
+    async def video_search_rich(
+        self, query: str, max_results: int = 10, time_range: Optional[str] = None,
+    ) -> list[RawVideoHit]:
+        """Video search returning rich per-result fields. Powers /search/videos."""
+        params: dict = {"q": query, "format": "json", "categories": "videos"}
+        if time_range in ("day", "week", "month", "year"):
+            params["time_range"] = time_range
+        resp = await self.client.get(f"{self.base_url}/search", params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+        hits: list[RawVideoHit] = []
+        for item in data.get("results", [])[:max_results]:
+            url = item.get("url", "")
+            if not url:
+                continue
+            # SearXNG's various video engines use slightly different keys
+            iframe_src = item.get("iframe_src")
+            img_src = (
+                item.get("thumbnail")
+                or item.get("thumbnail_src")
+                or item.get("img_src")
+            )
+            duration = item.get("length") or item.get("duration")
+            author = item.get("author")
+            hits.append(RawVideoHit(
+                title=item.get("title", ""),
+                url=url,
+                iframe_src=iframe_src,
+                img_src=img_src,
+                duration=str(duration) if duration is not None else None,
+                author=author,
+                source=item.get("engine"),
+            ))
+        return hits
 
 
 class DuckDuckGoBackend(SearchBackend):
@@ -238,6 +350,13 @@ class FallbackSearchBackend(SearchBackend):
         except (Exception, CircuitBreakerError) as e:
             logger.warning("primary_backend_failed", error=str(e), falling_back=True)
             return await self.fallback.search(query, **kwargs)
+
+    async def image_search_rich(self, *args, **kwargs):
+        # No fallback for media search yet; delegate straight to primary.
+        return await self.primary.image_search_rich(*args, **kwargs)
+
+    async def video_search_rich(self, *args, **kwargs):
+        return await self.primary.video_search_rich(*args, **kwargs)
 
 
 def create_search_backend(config: AppConfig, http_client: httpx.AsyncClient) -> SearchBackend:
