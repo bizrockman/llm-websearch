@@ -40,6 +40,11 @@ class CacheConfig(BaseModel):
     redis_url: str = "redis://redis:6379"
     search_ttl: int = 3600
     extract_ttl: int = 86400
+    # og:image lookup is a small URL-only fact about a page; thumbnail URLs
+    # rarely change so we cache them for a long time. Negative results
+    # (no og:image found / fetch failed) are cached for the same TTL too,
+    # so we don't keep hammering pages that don't expose one.
+    og_image_ttl: int = 7 * 24 * 3600
 
 
 class ProxyConfig(BaseModel):

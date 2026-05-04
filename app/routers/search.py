@@ -225,12 +225,31 @@ async def search_news(
 ) -> SearchResponse:
     body.topic = Topic.news
     try:
-        return await asyncio.wait_for(
+        result = await asyncio.wait_for(
             _do_search(request, body, http_response),
             timeout=settings.resilience.request_timeout,
         )
     except asyncio.TimeoutError:
         raise HTTPException(504, "Request timed out")
+
+    # og:image fallback: Bing-news doesn't return per-result thumbnails for
+    # all sources (Bloomberg yes, MarketWatch no, etc.). For results without
+    # one, fetch the page once and pull og:image. Cached in Redis with a
+    # week TTL so repeat panels are cheap. The fill is bounded so a slow
+    # origin can't stall the search response.
+    og = getattr(request.app.state, "og_image", None)
+    missing = [r for r in result.results if not r.thumbnail]
+    if og and missing:
+        await og.fill_missing_thumbnails(result.results)
+        # Refresh the search cache so a follow-up call with the same query
+        # serves an already-enriched response without re-running og fetches.
+        ph = _params_hash(body)
+        cache = request.app.state.cache
+        cache_data = result.model_dump()
+        cache_data.pop("response_time", None)
+        await cache.set_search(body.query, ph, cache_data)
+
+    return result
 
 
 # ---------------------------------------------------------------------------

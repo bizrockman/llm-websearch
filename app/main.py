@@ -17,6 +17,7 @@ from app.routers import extract, search, search_stream
 from app.services.cache import CacheService
 from app.services.extractor import ContentExtractor
 from app.services.indexer import IndexerService
+from app.services.og_image import OgImageService
 from app.services.llm import LLMService
 from app.services.reranker import RerankerService
 from app.services.search_backend import create_search_backend
@@ -148,6 +149,14 @@ async def lifespan(app: FastAPI):
     # Content extractor
     app.state.extractor = ContentExtractor(
         settings, app.state.extract_http_client, indexer=app.state.indexer
+    )
+
+    # og:image fallback service (used by /search/news to fill missing
+    # per-result thumbnails). Reuses the extract HTTP client which already
+    # has a generous connection pool sized for parallel article fetches.
+    app.state.og_image = OgImageService(
+        app.state.extract_http_client,
+        cache=app.state.cache,
     )
 
     # Reranker

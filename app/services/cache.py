@@ -20,6 +20,7 @@ class CacheService:
         self.search_ttl = config.cache.search_ttl
         self.extract_ttl = config.cache.extract_ttl
         self.answer_ttl = config.llm.answer_ttl
+        self.og_image_ttl = config.cache.og_image_ttl
 
     async def connect(self) -> None:
         if not self.enabled:
@@ -146,3 +147,38 @@ class CacheService:
                 await pipe.execute()
         except Exception as e:
             logger.warning("cache_batch_write_error", error=str(e))
+
+    # --- og:image cache --------------------------------------------------
+    # Small URL-only mapping: page_url -> og:image_url (or empty string for
+    # negative cache when the page has no og:image / fetch failed). We use
+    # a sentinel rather than a missing key so a negative result also gets
+    # cached and we don't re-fetch sites that simply don't expose og:image.
+
+    _OG_NEGATIVE = "\x00"  # Stored when fetch produced no usable og:image
+
+    async def get_og_image(self, url: str) -> Optional[str]:
+        """Returns the cached og:image URL, "" if cached negative, or None
+        if not cached at all."""
+        if not self.enabled or not self._redis:
+            return None
+        key = self._hash_key("ogimg", url)
+        try:
+            data = await self._redis.get(key)
+            if data is None:
+                return None
+            if data == self._OG_NEGATIVE:
+                return ""
+            return data
+        except Exception as e:
+            logger.warning("cache_read_error", error=str(e))
+            return None
+
+    async def set_og_image(self, url: str, image: Optional[str]) -> None:
+        if not self.enabled or not self._redis:
+            return
+        key = self._hash_key("ogimg", url)
+        value = image if image else self._OG_NEGATIVE
+        try:
+            await self._redis.setex(key, self.og_image_ttl, value)
+        except Exception as e:
+            logger.warning("cache_write_error", error=str(e))
