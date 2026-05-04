@@ -80,11 +80,23 @@ class ExtractRequest(BaseModel):
     urls: list[str] = Field(..., min_length=1, max_length=20, description="URLs to extract content from")
     extract_depth: ExtractDepth = Field(default=ExtractDepth.basic, description="Extraction depth")
     format: ContentFormat = Field(default=ContentFormat.markdown, description="Output format")
+    force_refresh: bool = Field(
+        default=False,
+        description="Bypass Redis and Meilisearch caches; always fetch from origin and re-index.",
+    )
 
 
 class ExtractResult(BaseModel):
     url: str
     raw_content: str = Field(description="Extracted page content")
+    source: Optional[str] = Field(
+        default=None,
+        description="Where the content came from: 'redis', 'index', 'web', or 'stale'.",
+    )
+    stale: bool = Field(
+        default=False,
+        description="True when origin fetch failed and content was served from the index as fallback.",
+    )
 
 
 class FailedResult(BaseModel):

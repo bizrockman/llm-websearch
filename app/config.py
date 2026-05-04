@@ -91,6 +91,9 @@ class MeilisearchConfig(BaseModel):
     index_name: str = "orio_pages"
     search_limit: int = 20
     min_score: float = 0.0
+    # How long an indexed page is considered "fresh" enough to serve from
+    # Meili in /extract without re-fetching the origin. Default: 30 days.
+    freshness_seconds: int = 30 * 24 * 3600
 
 
 class LLMConfig(BaseModel):
@@ -150,6 +153,11 @@ def _apply_env_overrides(cfg: AppConfig) -> AppConfig:
         cfg.meilisearch.api_key = v
     if env("ORIO_MEILI_ENABLED"):
         cfg.meilisearch.enabled = env("ORIO_MEILI_ENABLED", "").lower() in ("1", "true", "yes")
+    if v := env("ORIO_MEILI_FRESHNESS_DAYS"):
+        try:
+            cfg.meilisearch.freshness_seconds = int(float(v) * 24 * 3600)
+        except ValueError:
+            pass
 
     if v := env("ORIO_LLM_BASE_URL"):
         cfg.llm.base_url = v
