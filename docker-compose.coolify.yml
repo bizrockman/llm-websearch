@@ -46,18 +46,27 @@ services:
           # which engines tolerate a given host changes without warning, and
           # a silently shrinking engine set is how search quality decays.
           #
-          # Blocked here: every query ends in a CAPTCHA (duckduckgo,
-          # startpage) or 429 (brave). Not an IP reputation problem — a
-          # plain wget and a real browser both reach these fine from this
-          # same address. They fingerprint SearXNG's request flow itself.
-          # Left enabled they cost latency on every search and fill the log
-          # with tracebacks, in exchange for nothing.
+          # Permanently challenged from this host: every query ends in a
+          # CAPTCHA. Not an IP reputation problem — a plain wget and a real
+          # browser both reach these fine from this same address, and
+          # solving a CAPTCHA over the host IP changed nothing. What gets
+          # recognised is SearXNG's request flow itself, so this will not
+          # clear on its own; it needs an upstream engine fix. Left enabled
+          # they cost latency on every search and fill the log with
+          # tracebacks, in exchange for nothing. Re-test after SearXNG
+          # releases that touch these engines.
           - name: duckduckgo
             disabled: true
           - name: startpage
             disabled: true
-          - name: brave
-            disabled: true
+
+          # brave is deliberately NOT in that list. Its failure mode is a
+          # 429, not a CAPTCHA — rate limiting, which expires by itself
+          # (verified: it went from "too many requests" back to 20 results
+          # without any intervention). Bursts will trip it again, and that
+          # is fine: the other engines carry the query while it backs off.
+          # Disabling it would trade a strong mainstream source for a
+          # condition that heals on its own.
 
           # Verified working. Note that "duckduckgo web" is a *different*
           # engine from "duckduckgo": it uses the plain HTML endpoint rather
