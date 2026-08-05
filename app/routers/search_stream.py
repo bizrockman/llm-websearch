@@ -48,6 +48,7 @@ async def search_stream(
             result = SearchResult(
                 title=raw.title, url=raw.url, content=raw.snippet,
                 score=raw.score, raw_content=None,
+                thumbnail=raw.thumbnail,
             )
             results.append(result)
             yield {"event": "result", "data": json.dumps(result.model_dump())}

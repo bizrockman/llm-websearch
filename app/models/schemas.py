@@ -59,6 +59,11 @@ class SearchResult(BaseModel):
     content: str = Field(description="Short snippet / description")
     score: float = Field(default=0.0, description="Relevance score (0-1)")
     raw_content: Optional[str] = Field(default=None, description="Full extracted page content")
+    thumbnail: Optional[str] = Field(
+        default=None,
+        description="Thumbnail/preview image URL when the underlying engine "
+                    "supplies one (Bing-news etc.). Not all engines do.",
+    )
 
 
 class ImageResult(BaseModel):
@@ -80,11 +85,23 @@ class ExtractRequest(BaseModel):
     urls: list[str] = Field(..., min_length=1, max_length=20, description="URLs to extract content from")
     extract_depth: ExtractDepth = Field(default=ExtractDepth.basic, description="Extraction depth")
     format: ContentFormat = Field(default=ContentFormat.markdown, description="Output format")
+    force_refresh: bool = Field(
+        default=False,
+        description="Bypass Redis and Meilisearch caches; always fetch from origin and re-index.",
+    )
 
 
 class ExtractResult(BaseModel):
     url: str
     raw_content: str = Field(description="Extracted page content")
+    source: Optional[str] = Field(
+        default=None,
+        description="Where the content came from: 'redis', 'index', 'web', or 'stale'.",
+    )
+    stale: bool = Field(
+        default=False,
+        description="True when origin fetch failed and content was served from the index as fallback.",
+    )
 
 
 class FailedResult(BaseModel):
@@ -95,4 +112,51 @@ class FailedResult(BaseModel):
 class ExtractResponse(BaseModel):
     results: list[ExtractResult]
     failed_results: list[FailedResult] = Field(default_factory=list)
+    response_time: float
+
+
+# --- Media search (images / videos) ---
+
+class MediaSearchRequest(BaseModel):
+    """Request body for /search/images and /search/videos.
+
+    Media search ignores search_depth: there is no `advanced` mode that fetches
+    pages, and results are never indexed into Meilisearch (the index is text-
+    only and owned by /extract).
+    """
+
+    query: str = Field(..., description="The search query")
+    max_results: int = Field(default=10, ge=1, le=30)
+    time_range: Optional[TimeRange] = Field(default=None)
+
+
+class ImageSearchResult(BaseModel):
+    title: str
+    url: str = Field(description="Page URL hosting the image")
+    img_src: str = Field(description="Direct image URL")
+    thumbnail_src: Optional[str] = Field(
+        default=None, description="Smaller preview image URL when the engine supplies one"
+    )
+    source: Optional[str] = Field(default=None, description="Engine name that produced the hit")
+
+
+class ImageSearchResponse(BaseModel):
+    query: str
+    results: list[ImageSearchResult]
+    response_time: float
+
+
+class VideoSearchResult(BaseModel):
+    title: str
+    url: str = Field(description="Video page URL")
+    iframe_src: Optional[str] = Field(default=None, description="Embed URL when available")
+    img_src: Optional[str] = Field(default=None, description="Thumbnail URL")
+    duration: Optional[str] = Field(default=None, description="Engine-provided duration string, e.g. '12:34'")
+    author: Optional[str] = Field(default=None, description="Channel/author when available")
+    source: Optional[str] = Field(default=None)
+
+
+class VideoSearchResponse(BaseModel):
+    query: str
+    results: list[VideoSearchResult]
     response_time: float
