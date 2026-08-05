@@ -6,7 +6,7 @@ import tempfile
 import pytest
 import yaml
 
-from app.config import AppConfig, load_config
+from app.config import AppConfig, RateLimitConfig, load_config
 
 
 class TestConfig:
@@ -77,10 +77,17 @@ class TestConfig:
         assert config.server.port == 8000
 
     def test_rate_limit_config(self):
+        """Overriding one rate must not disturb the others.
+
+        Compared against the field default rather than a literal — the
+        defaults are deliberately tuned for agentic burst traffic and get
+        adjusted, which should not break this test.
+        """
         config = AppConfig(rate_limit={"enabled": True, "search_rate": "10/minute"})
         assert config.rate_limit.enabled is True
         assert config.rate_limit.search_rate == "10/minute"
-        assert config.rate_limit.extract_rate == "30/minute"  # default
+        assert config.rate_limit.extract_rate == RateLimitConfig().extract_rate
+        assert config.rate_limit.default_rate == RateLimitConfig().default_rate
 
     def test_proxy_config(self):
         config = AppConfig(proxy={"enabled": True, "url": "http://proxy:8080"})
