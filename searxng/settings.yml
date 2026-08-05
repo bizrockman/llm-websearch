@@ -11,3 +11,24 @@ search:
 
 general:
   enable_metrics: false
+
+# Keep in sync with the inline settings in docker-compose.coolify.yml.
+# Rationale for each entry is documented there.
+engines:
+  - name: duckduckgo
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: brave
+    disabled: true
+
+  - name: duckduckgo web
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: seznam
+    disabled: false
+  - name: yep
+    disabled: false
+  - name: mwmbl
+    disabled: false

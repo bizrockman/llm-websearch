@@ -40,6 +40,38 @@ services:
 
         general:
           enable_metrics: false
+
+        engines:
+          # Measured from this host on 2026-08-05. Re-check occasionally —
+          # which engines tolerate a given host changes without warning, and
+          # a silently shrinking engine set is how search quality decays.
+          #
+          # Blocked here: every query ends in a CAPTCHA (duckduckgo,
+          # startpage) or 429 (brave). Not an IP reputation problem — a
+          # plain wget and a real browser both reach these fine from this
+          # same address. They fingerprint SearXNG's request flow itself.
+          # Left enabled they cost latency on every search and fill the log
+          # with tracebacks, in exchange for nothing.
+          - name: duckduckgo
+            disabled: true
+          - name: startpage
+            disabled: true
+          - name: brave
+            disabled: true
+
+          # Verified working. Note that "duckduckgo web" is a *different*
+          # engine from "duckduckgo": it uses the plain HTML endpoint rather
+          # than the guarded POST/vqd flow, and is not challenged.
+          - name: duckduckgo web
+            disabled: false
+          - name: bing
+            disabled: false
+          - name: seznam
+            disabled: false
+          - name: yep
+            disabled: false
+          - name: mwmbl
+            disabled: false
         EOF
         chown searxng:searxng /etc/searxng/settings.yml
         exec /usr/local/searxng/entrypoint.sh

@@ -169,10 +169,34 @@ quietly — engines fail one by one until searches return nothing. This
 deployment intentionally tracks `latest`; if someone pins it, that pin needs
 bumping every few weeks.
 
-If engines still fail on a current image, the host IP is the constraint, and
-the options are: route SearXNG through a proxy (`outgoing.proxies` in its
-settings), enable engines that tolerate datacenter IPs (Mojeek, Marginalia,
-Wikipedia), or add a paid search API as a fallback.
+If engines still fail on a current image, don't guess which to swap in —
+measure. Disabled engines can be queried directly via the `engines=`
+parameter without touching the config or restarting:
+
+```bash
+docker exec $(docker ps -qf "name=searxng") sh -c '/usr/local/searxng/.venv/bin/python - <<PY
+import json, urllib.parse, urllib.request
+for e in ["duckduckgo web","bing","yahoo","mojeek","yep","mwmbl","seznam","qwant","yacy"]:
+    url = "http://127.0.0.1:8080/search?format=json&q=kubernetes+ingress&engines=" + urllib.parse.quote(e)
+    try:
+        d = json.load(urllib.request.urlopen(url, timeout=25))
+        print(f"{len(d.get(chr(34)+\"results\"+chr(34), [])):3d}  {e}")
+    except Exception as ex:
+        print(f"  ?  {e}  {ex}")
+PY'
+```
+
+Then enable what actually delivers, in the `engines:` block of the inline
+settings in `docker-compose.coolify.yml`.
+
+Worth knowing: `duckduckgo web` and `duckduckgo` are two different engines.
+The former uses the plain HTML endpoint and generally works; the latter uses
+a guarded POST/vqd flow and gets challenged. Same for `bing`, which often
+works where `yahoo` (Bing-powered) does not.
+
+If nothing mainstream survives, the honest remaining options are an official
+API (Brave Search API has a free tier and needs no scraping) or a proxy in
+front of SearXNG's outgoing requests.
 
 ## What must NOT be committed
 
