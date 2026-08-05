@@ -131,10 +131,14 @@ async def _do_search(request: Request, body: SearchRequest) -> SearchResponse:
         response_time=round(elapsed, 3),
     )
 
-    # Cache response
-    cache_data = response.model_dump()
-    del cache_data["response_time"]
-    await cache.set_search(body.query, ph, cache_data)
+    # Cache response — only when we actually have results. Empty responses
+    # are typically caused by transient upstream failures (SearXNG engines
+    # rate-limited, etc.); caching them would pin a zero-result answer for
+    # the entire TTL and force clients to work around it.
+    if results:
+        cache_data = response.model_dump()
+        del cache_data["response_time"]
+        await cache.set_search(body.query, ph, cache_data)
 
     return response
 

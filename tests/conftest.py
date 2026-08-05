@@ -24,14 +24,19 @@ from app.services.search_backend import (
 # ---- Fake search backend ----
 
 class FakeSearchBackend(SearchBackend):
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, empty: bool = False) -> None:
         self.fail = fail
+        self.empty = empty
         self.last_kwargs: dict = {}
+        self.call_count = 0
 
     async def search(self, query: str, **kwargs) -> BackendSearchResponse:
         self.last_kwargs = {"query": query, **kwargs}
+        self.call_count += 1
         if self.fail:
             raise RuntimeError("Backend unavailable")
+        if self.empty:
+            return BackendSearchResponse(results=[], images=[])
         results = [
             RawSearchResult(title=f"Result {i}", url=f"https://example.com/{i}", snippet=f"Snippet {i}", score=round(1.0 - i * 0.1, 2))
             for i in range(kwargs.get("max_results", 3))
@@ -141,6 +146,32 @@ class DisabledLLMService:
         pass
 
 
+# ---- Fake indexer ----
+
+class FakeIndexer:
+    """No-op indexer for tests. Records calls for assertions."""
+
+    def __init__(self) -> None:
+        self.enabled = False   # keeps search_local behavior predictable if used
+        self.indexed: list[dict] = []
+        self._meta: dict[str, dict] = {}
+
+    async def initialize(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    async def get_meta(self, url: str):
+        return self._meta.get(url)
+
+    async def index_document(self, *, url, title, content, etag=None, last_modified=None) -> None:
+        self.indexed.append({"url": url, "title": title, "content": content})
+
+    async def search(self, query: str, limit=None):
+        return []
+
+
 # ---- Reset sse_starlette AppStatus across tests ----
 
 @pytest_asyncio.fixture(autouse=True)
@@ -163,6 +194,7 @@ async def app():
     _app.state.cache = FakeCache()
     _app.state.reranker = RerankerService()  # disabled by default
     _app.state.llm = FakeLLMService()
+    _app.state.indexer = FakeIndexer()
 
     yield _app
 

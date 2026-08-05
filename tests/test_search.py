@@ -133,6 +133,30 @@ async def test_search_cache_hit(client):
     assert resp2.json()["results"] == resp1.json()["results"]
 
 
+@pytest.mark.asyncio
+async def test_empty_results_are_not_cached(app):
+    """A zero-result response (SearXNG engines rate-limited, etc.) must not
+    pin the cache for the full TTL — otherwise every follow-up query with
+    matching params keeps getting the empty response until the TTL expires.
+    """
+    from tests.conftest import FakeSearchBackend
+    from httpx import ASGITransport, AsyncClient
+
+    backend = FakeSearchBackend(empty=True)
+    app.state.search_backend = backend
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp1 = await ac.post("/search", json={"query": "no hits", "max_results": 3})
+        resp2 = await ac.post("/search", json={"query": "no hits", "max_results": 3})
+
+    assert resp1.status_code == 200
+    assert resp1.json()["results"] == []
+    assert resp2.status_code == 200
+    assert resp2.json()["results"] == []
+    # Both requests must have hit the real backend, not the cache.
+    assert backend.call_count == 2, "empty response should not have been cached"
+
+
 # ---- Search validation errors ----
 
 @pytest.mark.asyncio
