@@ -143,6 +143,37 @@ ssh -L 7700:localhost:7700 user@coolify-host
 - Meilisearch index gone after redeploy → `meili_data` volume was wiped,
   enable "Preserve Volumes" in the Coolify UI
 
+### `/search` returns 200 with an empty `results` array
+
+Nothing is broken in this service — SearXNG's upstream engines are refusing
+it. Ask SearXNG directly to see which:
+
+```bash
+docker exec $(docker ps -qf "name=searxng") \
+  wget -qO- "http://127.0.0.1:8080/search?q=test&format=json&categories=general" \
+  | /usr/local/searxng/.venv/bin/python -c \
+    "import json,sys; d=json.load(sys.stdin); print('hits:', len(d['results'])); print('dead:', d.get('unresponsive_engines'))"
+```
+
+Typical entries and what they mean:
+
+| Reason | Cause |
+|---|---|
+| `CAPTCHA` (duckduckgo, startpage) | The host IP is being challenged. Datacenter ranges get this far more often, and it escalates with request volume. |
+| `too many requests` (brave) | Rate limited. Recovers on its own. |
+| `access denied` (some engine) | Often an engine upstream has dropped or changed — check whether the running SearXNG version still ships it. |
+
+**First thing to check: is the SearXNG image current?** Engine scrapers break
+constantly and are fixed continuously upstream. A stale image degrades
+quietly — engines fail one by one until searches return nothing. This
+deployment intentionally tracks `latest`; if someone pins it, that pin needs
+bumping every few weeks.
+
+If engines still fail on a current image, the host IP is the constraint, and
+the options are: route SearXNG through a proxy (`outgoing.proxies` in its
+settings), enable engines that tolerate datacenter IPs (Mojeek, Marginalia,
+Wikipedia), or add a paid search API as a fallback.
+
 ## What must NOT be committed
 
 The repo version of [searxng/settings.prod.yml](searxng/settings.prod.yml)

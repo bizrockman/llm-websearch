@@ -1,10 +1,19 @@
 services:
   searxng:
-    # Pinned to a specific tag — newer versions (2026.5.x and up) introduced
-    # strict msgspec schema validation that breaks our minimal settings.yml.
-    # Bump cautiously when upstream stabilizes the schema or when we update
-    # settings.prod.yml to match the new requirements.
-    image: searxng/searxng:2026.4.24-a7ac696b4
+    # Deliberately unpinned. SearXNG's value is its engine scrapers, and those
+    # break continuously as DuckDuckGo, Brave, Startpage et al. change their
+    # markup and anti-bot behaviour; upstream ships fixes and drops dead
+    # engines every few days. A pin that goes stale silently degrades search
+    # quality until it returns nothing — which is exactly what happened when
+    # this was frozen at 2026.4.24 for three months.
+    #
+    # (That pin was a misdiagnosis anyway: the "Invalid settings.yml" error it
+    # was meant to avoid came from Coolify mounting an empty file, not from a
+    # schema change. 2026.8.4 parses this exact config without complaint.)
+    #
+    # The healthcheck below is the safety net — a broken upstream release
+    # fails visibly and fast rather than silently.
+    image: searxng/searxng:latest
     restart: unless-stopped
     user: "0:0"
     # Settings are generated inline at startup. Coolify's bind-mount handling
