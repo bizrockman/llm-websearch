@@ -61,6 +61,15 @@ class BackendSearchResponse:
     images: list[RawImageResult] = field(default_factory=list)
 
 
+@dataclass
+class EngineHealth:
+    """Per-engine outcome of a diagnostic query."""
+    name: str
+    results: int = 0
+    ok: bool = False
+    reason: Optional[str] = None
+
+
 class SearchBackend(ABC):
     @abstractmethod
     async def search(
@@ -90,6 +99,18 @@ class SearchBackend(ABC):
         """Optional: dedicated video search with rich per-result fields."""
         raise NotImplementedError(
             "This backend does not implement video_search_rich"
+        )
+
+    async def engine_status(self, query: str) -> list[EngineHealth]:
+        """Optional: report how each *configured* engine fared on one query."""
+        raise NotImplementedError(
+            "This backend does not implement engine_status"
+        )
+
+    async def probe_engines(self, query: str, names: list[str]) -> list[EngineHealth]:
+        """Optional: query named engines individually, including disabled ones."""
+        raise NotImplementedError(
+            "This backend does not implement probe_engines"
         )
 
 
@@ -267,6 +288,129 @@ class SearXNGBackend(SearchBackend):
         return hits
 
 
+    # ---- Diagnostics -------------------------------------------------------
+    #
+    # Which engines a given host can reach changes without notice, and the
+    # failure is silent: results just get thinner until they stop. These two
+    # methods make that visible on demand. They are deliberately *not* wired
+    # into /health — each one costs real upstream queries, and a liveness
+    # probe firing searches every few seconds would create the rate limiting
+    # it is meant to detect.
+
+    async def _raw_search(
+        self, query: str, engines: Optional[str] = None, timeout: float = 25.0
+    ) -> dict:
+        params: dict = {"q": query, "format": "json"}
+        if engines:
+            # `categories` and `engines` are a union in SearXNG, not an
+            # intersection: sending both runs every engine in the category
+            # *plus* the named one, so a probe would report the whole set's
+            # results under a single engine's name. Selecting by engine means
+            # selecting by engine only.
+            params["engines"] = engines
+        else:
+            params["categories"] = "general"
+        resp = await self.client.get(
+            f"{self.base_url}/search", params=params, timeout=timeout
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    @staticmethod
+    def _health_from_payload(data: dict) -> list[EngineHealth]:
+        """Turn one SearXNG response into per-engine health.
+
+        Results carry the engines that produced them, so counting gives the
+        engines that actually delivered. `unresponsive_engines` covers those
+        that errored — note an engine can be in neither: answering normally
+        with nothing to say for this particular query.
+        """
+        counts: dict[str, int] = {}
+        for r in data.get("results", []):
+            for e in r.get("engines", []) or []:
+                counts[e] = counts.get(e, 0) + 1
+
+        health = [
+            EngineHealth(name=name, results=n, ok=True)
+            for name, n in sorted(counts.items(), key=lambda kv: -kv[1])
+        ]
+        for entry in data.get("unresponsive_engines", []) or []:
+            name = entry[0] if isinstance(entry, (list, tuple)) and entry else str(entry)
+            reason = entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else None
+            health.append(EngineHealth(name=name, results=0, ok=False, reason=reason))
+        return health
+
+    async def configured_engines(self, category: str = "general") -> list[str]:
+        """Names of the engines currently enabled for a category."""
+        resp = await self.client.get(f"{self.base_url}/config", timeout=15.0)
+        resp.raise_for_status()
+        return sorted(
+            e["name"]
+            for e in resp.json().get("engines", [])
+            if e.get("enabled") and category in (e.get("categories") or [])
+        )
+
+    async def engine_status(self, query: str) -> list[EngineHealth]:
+        """Status of every configured engine — including the ones that stayed
+        quiet.
+
+        A search response alone cannot answer "is this engine still working?":
+        engines that answer with nothing simply do not appear in it, and are
+        indistinguishable from engines that were never configured. So the
+        enabled set is fetched separately and used as the roll call.
+        """
+        config_task = asyncio.create_task(self.configured_engines())
+        data = await self._raw_search(query)
+        observed = {h.name: h for h in self._health_from_payload(data)}
+
+        try:
+            configured = await config_task
+        except Exception as e:
+            # Without the roll call we can still report what we saw, we just
+            # cannot vouch for completeness. Better than failing outright.
+            logger.warning("engine_config_unavailable", error=str(e))
+            return list(observed.values())
+
+        health = [
+            observed.get(name, EngineHealth(name=name, results=0, ok=True))
+            for name in configured
+        ]
+        # An engine can report as unresponsive without being enabled for this
+        # category (SearXNG surfaces failures across the whole request), so
+        # keep anything observed that the roll call did not mention.
+        health.extend(h for n, h in observed.items() if n not in set(configured))
+        return sorted(health, key=lambda h: (-h.results, h.name))
+
+    async def probe_engines(self, query: str, names: list[str]) -> list[EngineHealth]:
+        """Query each engine on its own, so one blocked engine cannot mask
+        another. Works for engines disabled in settings too — SearXNG honours
+        an explicit `engines=` selection regardless.
+        """
+        sem = asyncio.Semaphore(5)
+
+        async def one(name: str) -> EngineHealth:
+            async with sem:
+                try:
+                    data = await self._raw_search(query, engines=name)
+                except Exception as e:  # network, timeout, bad status
+                    return EngineHealth(name=name, ok=False, reason=str(e)[:120])
+
+            dead = {
+                (u[0] if isinstance(u, (list, tuple)) and u else str(u)): (
+                    u[1] if isinstance(u, (list, tuple)) and len(u) > 1 else None
+                )
+                for u in (data.get("unresponsive_engines") or [])
+            }
+            if name in dead:
+                return EngineHealth(name=name, ok=False, reason=dead[name])
+            n = len(data.get("results", []))
+            # Answering with zero results is not the same as failing — the
+            # engine is reachable, it just had nothing for this query.
+            return EngineHealth(name=name, results=n, ok=True)
+
+        return list(await asyncio.gather(*(one(n) for n in names)))
+
+
 class DuckDuckGoBackend(SearchBackend):
     def __init__(self) -> None:
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ddg")
@@ -357,6 +501,14 @@ class FallbackSearchBackend(SearchBackend):
 
     async def video_search_rich(self, *args, **kwargs):
         return await self.primary.video_search_rich(*args, **kwargs)
+
+    async def engine_status(self, *args, **kwargs):
+        # Diagnostics describe the primary backend; falling back here would
+        # report on a different system than the one being asked about.
+        return await self.primary.engine_status(*args, **kwargs)
+
+    async def probe_engines(self, *args, **kwargs):
+        return await self.primary.probe_engines(*args, **kwargs)
 
 
 def create_search_backend(config: AppConfig, http_client: httpx.AsyncClient) -> SearchBackend:

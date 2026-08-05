@@ -13,7 +13,7 @@ from app.config import settings
 from app.logging_setup import setup_logging
 from app.middleware import RequestIDMiddleware, TimingMiddleware
 from app.rate_limit import limiter
-from app.routers import extract, search, search_stream
+from app.routers import diagnostics, extract, search, search_stream
 from app.services.cache import CacheService
 from app.services.extractor import ContentExtractor
 from app.services.indexer import IndexerService
@@ -218,6 +218,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(search.router)
 app.include_router(extract.router)
 app.include_router(search_stream.router)
+app.include_router(diagnostics.router)
 
 
 @app.get("/health")

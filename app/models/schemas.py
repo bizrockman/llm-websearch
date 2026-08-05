@@ -160,3 +160,31 @@ class VideoSearchResponse(BaseModel):
     query: str
     results: list[VideoSearchResult]
     response_time: float
+
+
+class EngineStatus(BaseModel):
+    name: str
+    results: int = Field(
+        default=0, description="Results this engine contributed to the probe query"
+    )
+    ok: bool = Field(
+        description=(
+            "True if the engine answered. Note ok=true with results=0 means "
+            "reachable but nothing to say for this query — not a failure."
+        )
+    )
+    reason: Optional[str] = Field(
+        default=None, description="Why it failed, as reported by SearXNG (e.g. 'CAPTCHA')"
+    )
+
+
+class EngineStatusResponse(BaseModel):
+    query: str = Field(description="Query used to exercise the engines")
+    mode: str = Field(description="'configured' (one query) or 'probe' (one query per engine)")
+    delivering: list[EngineStatus] = Field(default_factory=list)
+    failing: list[EngineStatus] = Field(default_factory=list)
+    silent: list[EngineStatus] = Field(
+        default_factory=list,
+        description="Configured and reachable, but returned nothing for this query",
+    )
+    response_time: float

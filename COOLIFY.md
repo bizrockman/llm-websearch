@@ -146,14 +146,16 @@ ssh -L 7700:localhost:7700 user@coolify-host
 ### `/search` returns 200 with an empty `results` array
 
 Nothing is broken in this service — SearXNG's upstream engines are refusing
-it. Ask SearXNG directly to see which:
+it. `GET /engines` reports every configured engine and its current state:
 
 ```bash
-docker exec $(docker ps -qf "name=searxng") \
-  wget -qO- "http://127.0.0.1:8080/search?q=test&format=json&categories=general" \
-  | /usr/local/searxng/.venv/bin/python -c \
-    "import json,sys; d=json.load(sys.stdin); print('hits:', len(d['results'])); print('dead:', d.get('unresponsive_engines'))"
+curl -sS https://orio.example.com/engines -H "Authorization: Bearer <key>"
 ```
+
+Engines are grouped as `delivering`, `silent` (reachable but nothing for
+this query) and `failing` (with the reason SearXNG gave). Utility engines
+like `wikipedia` or `dictzone` sitting in `silent` for a technical query is
+normal, not a fault.
 
 Typical entries and what they mean:
 
@@ -170,24 +172,21 @@ deployment intentionally tracks `latest`; if someone pins it, that pin needs
 bumping every few weeks.
 
 If engines still fail on a current image, don't guess which to swap in —
-measure. Disabled engines can be queried directly via the `engines=`
-parameter without touching the config or restarting:
+measure. The `probe` parameter tests engines one at a time, including ones
+disabled in the config, so candidates can be evaluated before enabling
+anything:
 
 ```bash
-docker exec $(docker ps -qf "name=searxng") sh -c '/usr/local/searxng/.venv/bin/python - <<PY
-import json, urllib.parse, urllib.request
-for e in ["duckduckgo web","bing","yahoo","mojeek","yep","mwmbl","seznam","qwant","yacy"]:
-    url = "http://127.0.0.1:8080/search?format=json&q=kubernetes+ingress&engines=" + urllib.parse.quote(e)
-    try:
-        d = json.load(urllib.request.urlopen(url, timeout=25))
-        print(f"{len(d.get(chr(34)+\"results\"+chr(34), [])):3d}  {e}")
-    except Exception as ex:
-        print(f"  ?  {e}  {ex}")
-PY'
+curl -sS "https://orio.example.com/engines?probe=duckduckgo%20web,bing,yahoo,mojeek,yep,mwmbl,seznam,qwant,yacy" \
+  -H "Authorization: Bearer <key>"
 ```
 
 Then enable what actually delivers, in the `engines:` block of the inline
 settings in `docker-compose.coolify.yml`.
+
+A single `failing` entry in the combined view is worth re-checking with
+`probe` before acting — upstream engines produce occasional one-off parse
+failures that clear by themselves.
 
 Worth knowing: `duckduckgo web` and `duckduckgo` are two different engines.
 The former uses the plain HTML endpoint and generally works; the latter uses
