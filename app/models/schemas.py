@@ -181,6 +181,15 @@ class EngineStatus(BaseModel):
 class EngineStatusResponse(BaseModel):
     query: str = Field(description="Query used to exercise the engines")
     mode: str = Field(description="'configured' (one query) or 'probe' (one query per engine)")
+    backend_version: Optional[str] = Field(
+        default=None,
+        description=(
+            "SearXNG version serving the request. Engine scrapers are fixed "
+            "upstream continuously, so a stale version is the first thing to "
+            "rule out when engines start failing. Only reported in "
+            "'configured' mode."
+        ),
+    )
     delivering: list[EngineStatus] = Field(default_factory=list)
     failing: list[EngineStatus] = Field(default_factory=list)
     silent: list[EngineStatus] = Field(

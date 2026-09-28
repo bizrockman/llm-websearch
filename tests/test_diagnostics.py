@@ -141,30 +141,33 @@ class TestQueryParameters:
 class _ConfigClient(_RecordingClient):
     """Serves both /config and /search so engine_status can cross-reference."""
 
-    def __init__(self, enabled, search_payload):
+    def __init__(self, enabled, search_payload, version="2026.9.25+abc1234"):
         super().__init__(search_payload)
         self.enabled = enabled
+        self.version = version
 
     async def get(self, url, params=None, timeout=None):
         if url.endswith("/config"):
             self.calls.append({"_config": True})
 
             class _Resp:
-                def __init__(self, names):
+                def __init__(self, names, version):
                     self._names = names
+                    self._version = version
 
                 def raise_for_status(self):
                     pass
 
                 def json(self):
                     return {
+                        "version": self._version,
                         "engines": [
                             {"name": n, "enabled": True, "categories": ["general"]}
                             for n in self._names
-                        ]
+                        ],
                     }
 
-            return _Resp(self.enabled)
+            return _Resp(self.enabled, self.version)
         return await super().get(url, params=params, timeout=timeout)
 
 
@@ -175,12 +178,31 @@ class TestConfiguredRollCall:
     """
 
     @pytest.mark.asyncio
+    async def test_reports_the_backend_version(self):
+        """Engine scrapers are fixed upstream continuously, so "is it just
+        out of date?" is the first question after a failure — and answering it
+        should not require shelling into the container."""
+        backend = SearXNGBackend("http://searxng:8080", _ConfigClient(
+            enabled=["bing"],
+            search_payload={"results": []},
+            version="2026.9.25+12f8b6515",
+        ))
+        _, version = await backend.engine_status("q")
+        assert version == "2026.9.25+12f8b6515"
+
+    @pytest.mark.asyncio
+    async def test_version_is_surfaced_through_the_endpoint(self, app):
+        app.state.search_backend = _FakeBackend(status=[], version="2026.9.25+abc")
+        body = (await _get(app, "/engines")).json()
+        assert body["backend_version"] == "2026.9.25+abc"
+
+    @pytest.mark.asyncio
     async def test_configured_engine_with_no_results_is_still_listed(self):
         backend = SearXNGBackend("http://searxng:8080", _ConfigClient(
             enabled=["bing", "mojeek"],
             search_payload={"results": [{"engines": ["bing"]}], "unresponsive_engines": []},
         ))
-        health = {h.name: h for h in await backend.engine_status("q")}
+        health = {h.name: h for h in (await backend.engine_status("q"))[0]}
         assert set(health) == {"bing", "mojeek"}
         assert health["bing"].results == 1
         assert health["mojeek"].ok is True      # reachable, just quiet
@@ -195,7 +217,7 @@ class TestConfiguredRollCall:
                 "unresponsive_engines": [["duckduckgo", "CAPTCHA"]],
             },
         ))
-        health = {h.name: h for h in await backend.engine_status("q")}
+        health = {h.name: h for h in (await backend.engine_status("q"))[0]}
         assert health["duckduckgo"].ok is False
         assert health["duckduckgo"].reason == "CAPTCHA"
         assert health["bing"].ok is True
@@ -211,7 +233,7 @@ class TestConfiguredRollCall:
                 "unresponsive_engines": [["some other engine", "timeout"]],
             },
         ))
-        health = {h.name: h for h in await backend.engine_status("q")}
+        health = {h.name: h for h in (await backend.engine_status("q"))[0]}
         assert "some other engine" in health
         assert health["some other engine"].ok is False
 
@@ -228,14 +250,16 @@ class TestConfiguredRollCall:
             enabled=["bing"],
             search_payload={"results": [{"engines": ["bing"]}]},
         ))
-        health = await backend.engine_status("q")
+        health, version = await backend.engine_status("q")
         assert [h.name for h in health] == ["bing"]
+        assert version is None      # roll call unavailable, so unknown
 
 
 # ---- Endpoint --------------------------------------------------------------
 
 class _FakeBackend:
-    def __init__(self, status=None, probe=None, raises=None):
+    def __init__(self, status=None, probe=None, raises=None, version=None):
+        self._version = version
         self._status = status or []
         self._probe = probe or []
         self._raises = raises
@@ -246,7 +270,7 @@ class _FakeBackend:
         if self._raises:
             raise self._raises
         self.status_calls.append(query)
-        return self._status
+        return self._status, self._version
 
     async def probe_engines(self, query, names):
         if self._raises:

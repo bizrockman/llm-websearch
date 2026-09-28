@@ -14,6 +14,12 @@ services:
     # The healthcheck below is the safety net — a broken upstream release
     # fails visibly and fast rather than silently.
     image: searxng/searxng:latest
+    # Tracking `latest` alone is not enough: `docker compose up` reuses a
+    # locally cached image even when the tag has moved on in the registry, so
+    # the container keeps running whatever was pulled on the first deploy.
+    # That silently reintroduces the staleness the unpinning was meant to
+    # avoid. `always` makes every deploy fetch the current image.
+    pull_policy: always
     restart: unless-stopped
     user: "0:0"
     # Settings are generated inline at startup. Coolify's bind-mount handling

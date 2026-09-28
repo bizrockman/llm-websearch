@@ -52,12 +52,13 @@ async def engine_status(
     if names and len(names) > 25:
         raise HTTPException(422, "probe accepts at most 25 engines per call")
 
+    version: str | None = None
     try:
         if names:
             health = await backend.probe_engines(q, names)
             mode = "probe"
         else:
-            health = await backend.engine_status(q)
+            health, version = await backend.engine_status(q)
             mode = "configured"
     except NotImplementedError:
         raise HTTPException(
@@ -89,6 +90,7 @@ async def engine_status(
     return EngineStatusResponse(
         query=q,
         mode=mode,
+        backend_version=version,
         delivering=delivering,
         failing=failing,
         silent=silent,

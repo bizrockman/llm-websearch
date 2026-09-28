@@ -101,8 +101,11 @@ class SearchBackend(ABC):
             "This backend does not implement video_search_rich"
         )
 
-    async def engine_status(self, query: str) -> list[EngineHealth]:
-        """Optional: report how each *configured* engine fared on one query."""
+    async def engine_status(
+        self, query: str
+    ) -> tuple[list[EngineHealth], Optional[str]]:
+        """Optional: how each *configured* engine fared on one query, plus the
+        backend version."""
         raise NotImplementedError(
             "This backend does not implement engine_status"
         )
@@ -340,19 +343,31 @@ class SearXNGBackend(SearchBackend):
             health.append(EngineHealth(name=name, results=0, ok=False, reason=reason))
         return health
 
-    async def configured_engines(self, category: str = "general") -> list[str]:
-        """Names of the engines currently enabled for a category."""
+    async def configured_engines(
+        self, category: str = "general"
+    ) -> tuple[list[str], Optional[str]]:
+        """Enabled engine names for a category, plus the SearXNG version.
+
+        The version rides along because it comes from the same payload and
+        answers the question that follows every engine failure: is this thing
+        simply out of date? Engine scrapers are fixed upstream continuously,
+        so a stale image is the first thing worth ruling out.
+        """
         resp = await self.client.get(f"{self.base_url}/config", timeout=15.0)
         resp.raise_for_status()
-        return sorted(
+        data = resp.json()
+        names = sorted(
             e["name"]
-            for e in resp.json().get("engines", [])
+            for e in data.get("engines", [])
             if e.get("enabled") and category in (e.get("categories") or [])
         )
+        return names, data.get("version")
 
-    async def engine_status(self, query: str) -> list[EngineHealth]:
+    async def engine_status(
+        self, query: str
+    ) -> tuple[list[EngineHealth], Optional[str]]:
         """Status of every configured engine — including the ones that stayed
-        quiet.
+        quiet — plus the backend version.
 
         A search response alone cannot answer "is this engine still working?":
         engines that answer with nothing simply do not appear in it, and are
@@ -364,12 +379,12 @@ class SearXNGBackend(SearchBackend):
         observed = {h.name: h for h in self._health_from_payload(data)}
 
         try:
-            configured = await config_task
+            configured, version = await config_task
         except Exception as e:
             # Without the roll call we can still report what we saw, we just
             # cannot vouch for completeness. Better than failing outright.
             logger.warning("engine_config_unavailable", error=str(e))
-            return list(observed.values())
+            return list(observed.values()), None
 
         health = [
             observed.get(name, EngineHealth(name=name, results=0, ok=True))
@@ -379,7 +394,7 @@ class SearXNGBackend(SearchBackend):
         # category (SearXNG surfaces failures across the whole request), so
         # keep anything observed that the roll call did not mention.
         health.extend(h for n, h in observed.items() if n not in set(configured))
-        return sorted(health, key=lambda h: (-h.results, h.name))
+        return sorted(health, key=lambda h: (-h.results, h.name)), version
 
     async def probe_engines(self, query: str, names: list[str]) -> list[EngineHealth]:
         """Query each engine on its own, so one blocked engine cannot mask

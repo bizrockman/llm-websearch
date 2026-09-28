@@ -1,7 +1,11 @@
 services:
   searxng:
-    # Unpinned on purpose — see the rationale in docker-compose.coolify.yml.
+    # Unpinned on purpose, and `pull_policy: always` is the other half of it:
+    # `docker compose up` happily reuses a cached image when the `latest` tag
+    # has moved on, so without this the container keeps running whatever was
+    # pulled first. See docker-compose.coolify.yml for the full rationale.
     image: searxng/searxng:latest
+    pull_policy: always
     container_name: orio-search-searxng
     ports:
       - "8080:8080"
