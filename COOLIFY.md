@@ -65,10 +65,81 @@ configurable in `config.yaml`).
 
 ## 5. Updates
 
-With auto-deploy enabled, Coolify polls the branch. For manual deploys:
-**Redeploy button** in the Coolify UI.
+With auto-deploy enabled, Coolify deploys when you push to the branch. For
+manual deploys: **Redeploy button** in the Coolify UI.
+
+Coolify does **not** watch Docker registries. A new SearXNG release changes
+nothing in this repo, so it triggers nothing. SearXNG tracks `latest` with
+`pull_policy: always`, which means every redeploy fetches the newest image,
+but a redeploy is still what has to happen. The weekly health check below
+tells you when.
 
 Data volumes (`redis_data`, `meili_data`) survive redeploys and image updates.
+
+## 6. Weekly health check
+
+[`scripts/healthcheck.py`](scripts/healthcheck.py) checks a running
+deployment end to end. Standard library only, so it runs anywhere with
+Python 3.9+, including the Coolify host itself.
+
+| Check | Fails when | Warns when |
+|---|---|---|
+| `health` | API unreachable | |
+| `auth` | requests without a key are accepted | |
+| `engines` | no engine delivers | fewer than `--min-engines` deliver, or an engine fails persistently |
+| `version` | | SearXNG trails the newest release by more than `--max-lag-days` |
+| `search` | a stable query returns nothing | |
+| `cache` | | a repeated query is not served from Redis |
+| `extract` | a stable page cannot be fetched, or the text comes back garbled | |
+
+Engines that answer `too many requests` are reported but never escalate:
+rate limiting heals on its own. Any other failure is re-probed individually
+before it counts, because upstream engines produce occasional one-off errors.
+
+Exit code `0` is OK, `1` is WARN, `2` is FAIL. With `--quiet` the script
+prints nothing when everything is OK, so cron only sends mail when there is
+something to look at.
+
+**Setup on the Coolify host:**
+
+```bash
+mkdir -p /opt/orio
+curl -fsSL https://raw.githubusercontent.com/bizrockman/llm-websearch/main/scripts/healthcheck.py \
+  -o /opt/orio/healthcheck.py
+
+cat > /etc/orio-healthcheck.env <<'EOF'
+ORIO_URL=https://llm-websearch.example.com
+ORIO_API_KEY=<your key>
+EOF
+chmod 600 /etc/orio-healthcheck.env
+
+# Try it once by hand
+python3 /opt/orio/healthcheck.py --env-file /etc/orio-healthcheck.env
+```
+
+Then `crontab -e`:
+
+```
+MAILTO=you@example.com
+0 7 * * 1  python3 /opt/orio/healthcheck.py --env-file /etc/orio-healthcheck.env --quiet
+```
+
+The key lives in a root-only file rather than in the crontab, where
+`crontab -l` would show it to anyone with access. `MAILTO` needs a working
+local mail setup; without one, append `>> /var/log/orio-healthcheck.log 2>&1`
+and check the log instead.
+
+**Typical WARN and what to do:**
+
+- `version ... days behind - redeploy to update`: redeploy. This is also the
+  first thing to try for failing engines, since scrapers are fixed upstream.
+- `engines ... failing: X (CAPTCHA)` after a redeploy: the engine blocks this
+  host. Disable it in the inline settings in `docker-compose.coolify.yml`.
+- `engines ... failing: X (access denied | HTTP error)`: usually a stale
+  adapter. Redeploy first; if it persists on a current image, disable it.
+
+`--json` gives machine-readable output, should you ever want to feed the
+result into something else.
 
 ## Persistent storage
 
