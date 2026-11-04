@@ -48,42 +48,48 @@ services:
           enable_metrics: false
 
         engines:
-          # Measured from this host on 2026-08-05. Re-check occasionally —
-          # which engines tolerate a given host changes without warning, and
-          # a silently shrinking engine set is how search quality decays.
+          # Measured from this host. Re-check with scripts/healthcheck.py or
+          # GET /engines: which engines tolerate a given host changes without
+          # warning, and a silently shrinking engine set is how search
+          # quality decays.
           #
-          # Permanently challenged from this host: every query ends in a
-          # CAPTCHA. Not an IP reputation problem — a plain wget and a real
-          # browser both reach these fine from this same address, and
-          # solving a CAPTCHA over the host IP changed nothing. What gets
-          # recognised is SearXNG's request flow itself, so this will not
-          # clear on its own; it needs an upstream engine fix. Left enabled
-          # they cost latency on every search and fill the log with
-          # tracebacks, in exchange for nothing. Re-test after SearXNG
-          # releases that touch these engines.
+          # Blocked by fingerprinting, so neither waiting nor updating helps.
+          # A plain wget and a real browser reach these fine from this same
+          # address; what gets recognised is the request flow of SearXNG
+          # itself. Left enabled they cost latency on every search and fill
+          # the log with tracebacks, in exchange for nothing.
+          #
+          #   duckduckgo, startpage   CAPTCHA on every query (since 2026-08)
+          #   yep                     403 from Cloudflare in front of the
+          #                           unofficial api.yep.com, tracked as
+          #                           searxng issue 4037 and open since
+          #                           2024-11. Ahrefs now sells Yep as a paid
+          #                           search API, so this free path is
+          #                           unlikely to reopen. (2026-11)
+          #
+          # Disabled explicitly rather than by omission: which engines
+          # SearXNG enables by default shifts between releases.
           - name: duckduckgo
             disabled: true
           - name: startpage
             disabled: true
+          - name: yep
+            disabled: true
 
           # brave is deliberately NOT in that list. Its failure mode is a
-          # 429, not a CAPTCHA — rate limiting, which expires by itself
-          # (verified: it went from "too many requests" back to 20 results
-          # without any intervention). Bursts will trip it again, and that
-          # is fine: the other engines carry the query while it backs off.
-          # Disabling it would trade a strong mainstream source for a
-          # condition that heals on its own.
+          # 429, rate limiting, which expires by itself: it has gone from
+          # "too many requests" back to delivering several times without
+          # any intervention. The other engines carry the query while it
+          # backs off.
 
-          # Verified working. Note that "duckduckgo web" is a *different*
-          # engine from "duckduckgo": it uses the plain HTML endpoint rather
-          # than the guarded POST/vqd flow, and is not challenged.
+          # Verified working. "duckduckgo web" is a different engine from
+          # "duckduckgo": it uses the plain HTML endpoint rather than the
+          # guarded POST/vqd flow, and is not challenged.
           - name: duckduckgo web
             disabled: false
           - name: bing
             disabled: false
           - name: seznam
-            disabled: false
-          - name: yep
             disabled: false
           - name: mwmbl
             disabled: false

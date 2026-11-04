@@ -15,11 +15,13 @@ general:
 # Keep in sync with the inline settings in docker-compose.coolify.yml.
 # Rationale for each entry is documented there.
 engines:
-  # brave stays enabled on purpose: it fails with a 429, which expires,
-  # unlike the CAPTCHA wall the two below sit behind permanently.
+  # Blocked by fingerprinting (CAPTCHA, or Cloudflare 403 for yep).
+  # brave stays enabled on purpose: it fails with a 429, which expires.
   - name: duckduckgo
     disabled: true
   - name: startpage
+    disabled: true
+  - name: yep
     disabled: true
 
   - name: duckduckgo web
@@ -27,8 +29,6 @@ engines:
   - name: bing
     disabled: false
   - name: seznam
-    disabled: false
-  - name: yep
     disabled: false
   - name: mwmbl
     disabled: false
